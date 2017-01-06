@@ -34,7 +34,8 @@ DEFAULT_CONFIG = {
     'gcloud_project': '',
     'gcloud_json_keyfile_name': '',
     'gcloud_json_keyfile_string': '',
-    'kube_config_file': ''
+    'kube_config_file': '',
+    'use_claim_name': False
 }
 
 
@@ -110,10 +111,11 @@ class Rule:
     deltas = None
     gce_disk = None
     gce_disk_zone = None
+    claim_name = None
 
     @property
     def pretty_name(self):
-        return self.name
+        return self.claim_name or self.name
 
     def __str__ (self):
         return self.name
@@ -121,7 +123,6 @@ class Rule:
 
 def filter_snapshots_by_rule(snapshots, rule):
     def match_disk(snapshot):
-        #europe-west1-c/disks/gke-production-c46cb51-pvc-01f74065-8fe9-11e6-abdd-42010af00148
         url_part = '/zones/{zone}/disks/{name}'.format(
             zone=rule.gce_disk_zone, name=rule.gce_disk)
         # TODO: Not obvious how we can know the zone..
@@ -164,10 +165,14 @@ def determine_next_snapshot(snapshots, rules):
 DELTA_ANNOTATION_KEY = 'backup.kubernetes.io/deltas'
 
 
-def rule_from_pv(volume):
+def rule_from_pv(volume, use_claim_name=False):
     """Given a persistent volume object, create a backup role
     object. Can return None if this volume is not configured for
     backups, or is not suitable.
+
+    `use_claim_name` - if the persistent volume is bound, and it's
+    name is auto-generated, then prefer to use the name of the claim
+    for the snapshot.
     """
 
     # TODO: Currently, K8s does not allow a PersistetVolumeClaim to
@@ -193,14 +198,16 @@ def rule_from_pv(volume):
             volume.name, e)
         return
 
-
-    # TODO: Use other names? name: volumeName / spec.claimRef.name claimRef.namespace
     rule = Rule()
     rule.name = volume.name
     rule.namespace = volume.namespace
     rule.deltas = deltas
     rule.gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
     rule.gce_disk_zone = 'europe-west1-c'
+    if use_claim_name and volume.obj['spec'].get('claimRef'):
+        if volume.annotations.get('kubernetes.io/createdby') == 'gce-pd-dynamic-provisioner':
+            ref = volume.obj['spec'].get('claimRef')
+            rule.claim_name = '{1}--{0}'.format(ref['name'], ref['namespace'])
     return rule
 
 
@@ -216,7 +223,8 @@ def sync_get_rules(ctx):
         vid = event.object.name
 
         if event.type == 'ADDED' or event.type == 'MODIFIED':
-            rule = rule_from_pv(event.object)
+            rule = rule_from_pv(
+                event.object, use_claim_name=ctx.config.get('use_claim_name'))
             if rule:
                 if event.type == 'ADDED' or not vid in rules:
                     logger.info('Volume {} added to list of backup jobs', vid)
