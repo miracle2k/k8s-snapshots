@@ -1,0 +1,6 @@
+google-api-python-client==1.5.4
+pykube==0.14.0
+tarsnapper==0.4.0
+aiochannel==0.2.2
+logbook==1.0.0
+pendulum==0.8.0
