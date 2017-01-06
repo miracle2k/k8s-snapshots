@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Written in asyncio as a learning experiment. Python because the
 backup expiration logic is already in tarsnapper and well tested.
 """
