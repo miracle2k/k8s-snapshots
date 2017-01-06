@@ -9,10 +9,10 @@ scheme.
 It works like this:
 
 1. Run it as a service, preferable inside your Kubernetes cluster.
-2. It will watch PersistentVolume resources and check the for an
+2. It will watch PersistentVolume resources and check those for an
    annotation named `backup.kubernetes.io/deltas`, which would have
-   a value such as "1d 7d 30d".
-3. For every PersistentVolume that defines this annotation, and is
+   a value such as `1d 7d 30d`.
+3. For every `PersistentVolume` that defines this annotation, and is
    a Google Compute disk, it will create new snapshots, and delete
    existing snapshots, according to the deltas defined.
 
@@ -78,6 +78,7 @@ Provide environment variables to configure these.
   <tr>
     <td>GCLOUD_PROJECT</td>
     <td>Yes</td>
+    <td></td>
     <td>Name of the Google Cloud project</td>
   </tr>
   <tr>
