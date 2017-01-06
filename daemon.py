@@ -90,7 +90,7 @@ class Context:
                 self.config.get('gcloud_json_keyfile_name'),
                 scopes=SCOPES)
 
-        if self.config.get('gcloud_json_keyfile'):
+        if self.config.get('gcloud_json_keyfile_string'):
             keyfile = json.loads(self.config.get('gcloud_json_keyfile_string'))
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(
                 keyfile, scopes=SCOPES)
