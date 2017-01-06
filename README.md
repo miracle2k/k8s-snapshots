@@ -70,6 +70,7 @@ Provide environment variables to configure these.
   <tr>
     <td>GCLOUD_JSON_KEYFILE_NAME</td>
     <td>One GCloud auth method is required</td>
+    <td></td>
     <td>
       Filename to the JSON keyfile that is used to authenticate. You'll want
       to mount it into the container.
@@ -78,6 +79,7 @@ Provide environment variables to configure these.
   <tr>
     <td>GCLOUD_JSON_KEYFILE_STRING</td>
     <td>One GCloud auth method is required</td>
+    <td></td>
     <td>
       The contents of the JSON keyfile that is used to authenticate.
     </td>
@@ -85,8 +87,9 @@ Provide environment variables to configure these.
   <tr>
     <td>KUBE_CONFIG_FILE</td>
     <td>No</td>
+    <td>Automatically uses the service account associated with the pod.</td>
     <td>
-      If not given, the service account associated with the pod is used.
+      Authentification with the Kubernetes API.
     </td>
   </tr>
   <tr>
