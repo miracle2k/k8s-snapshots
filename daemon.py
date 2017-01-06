@@ -19,11 +19,10 @@ import logbook
 from asyncutils import combine, combine_latest, iterate_in_executor, exec
 
 
-# TODO: the zone problem = formatting
-# TODO: nicer names
-# TODO: A solution to backup normal volumes?
-#    -> manual list of volumes
-# TODO: prevent a backup loop...
+# TODO: A solution to backup normal volumes, non-persistent?
+# TODO: prevent a backup loop: A failsafe mechanism to make sure we
+#   don't create more than x snapshots per disk; in case something
+#   is wrong with the code that loads the exsting snapshots from GCloud.
 #
 
 logger = logbook.Logger('daemon')
@@ -125,7 +124,6 @@ def filter_snapshots_by_rule(snapshots, rule):
     def match_disk(snapshot):
         url_part = '/zones/{zone}/disks/{name}'.format(
             zone=rule.gce_disk_zone, name=rule.gce_disk)
-        # TODO: Not obvious how we can know the zone..
         return snapshot['sourceDisk'].endswith(url_part)
     return filter(match_disk, snapshots)
 
@@ -175,7 +173,7 @@ def rule_from_pv(volume, use_claim_name=False):
     for the snapshot.
     """
 
-    # TODO: Currently, K8s does not allow a PersistetVolumeClaim to
+    # TODO: Currently, K8s does not allow a PersistentVolumeClaim to
     # specify any annotations for the PersistentVolume a provisioner
     # would create. Indeed, this might ever be possible. We might
     # want to follow the claimRef link and see if the claim specifies
@@ -203,7 +201,18 @@ def rule_from_pv(volume, use_claim_name=False):
     rule.namespace = volume.namespace
     rule.deltas = deltas
     rule.gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
-    rule.gce_disk_zone = 'europe-west1-c'
+
+    # How can we know the zone? In theory, the storage class can
+    # specify a zone; but if not specified there, K8s can choose a
+    # random zone within the master region. So we really can't trust
+    # that value anyway.
+    # There is a label that gives a failure region, but labels aren't
+    # really a trustworthy source for this.
+    # Apparently, this is a thing in the Kubernetes source too, see:
+    # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
+    # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
+    rule.gce_disk_zone = volume.labels.get('failure-domain.beta.kubernetes.io/zone')
+
     if use_claim_name and volume.obj['spec'].get('claimRef'):
         if volume.annotations.get('kubernetes.io/createdby') == 'gce-pd-dynamic-provisioner':
             ref = volume.obj['spec'].get('claimRef')
