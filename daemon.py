@@ -109,6 +109,7 @@ class Rule:
     name = None
     namespace = None
     deltas = None
+    deltas_unparsed = None
     gce_disk = None
     gce_disk_zone = None
     claim_name = None
@@ -186,14 +187,14 @@ def rule_from_pv(volume, use_claim_name=False):
         logger.debug('Volume {} not a GCE persistent disk', volume.name)
         return
 
-    deltas = volume.annotations.get('backup.kubernetes.io/deltas')
-    if not deltas:
+    deltas_unparsed = volume.annotations.get('backup.kubernetes.io/deltas')
+    if not deltas_unparsed:
         logger.debug('Volume {} does not define backup deltas (via {})',
             volume.name, DELTA_ANNOTATION_KEY)
         return
 
     try:
-        deltas = parse_deltas(deltas)
+        deltas = parse_deltas(deltas_unparsed)
     except ConfigError as e:
         logger.error('Deltas defined by volume {} are not valid, error message was: {}',
             volume.name, e)
@@ -203,6 +204,7 @@ def rule_from_pv(volume, use_claim_name=False):
     rule.name = volume.name
     rule.namespace = volume.namespace
     rule.deltas = deltas
+    rule.deltas_unparsed = deltas_unparsed
     rule.gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
 
     # How can we know the zone? In theory, the storage class can
@@ -239,7 +241,8 @@ def sync_get_rules(ctx):
                 event.object, use_claim_name=ctx.config.get('use_claim_name'))
             if rule:
                 if event.type == 'ADDED' or not vid in rules:
-                    logger.info('Volume {} added to list of backup jobs', vid)
+                    logger.info('Volume {} added to list of backup jobs with deltas {}',
+                        vid, rule.deltas_unparsed)
                 else:
                     logger.info('Backup job for volume {} was updated', vid)
                 rules[vid] = rule
