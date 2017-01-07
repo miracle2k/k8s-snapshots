@@ -314,7 +314,7 @@ async def make_backup(ctx, rule):
     name = '{}-{}'.format(rule.pretty_name, pendulum.now('utc').format('%d%m%y-%H%M%S'))
 
     logbook.info('Creating a snapshot for disk {} with name {}',
-        rule.pretty_name, name)
+        rule.name, name)
 
     result = await exec(ctx.gcloud.disks().createSnapshot(
         disk=rule.gce_disk,
