@@ -122,4 +122,30 @@ Provide environment variables to configure these.
     <td>INFO</td>
     <td>DEBUG, INFO, WARNING, ERROR</td>
   </tr>
+  <tr>
+    <td>VOLUMES</td>
+    <td>No</td>
+    <td></td>
+    <td>
+      Comma-separated list of volumes to backup. This allows you to
+      manually specify volumes you want to create snapshots for; useful
+      for volumes you are using without a PersistentVolume.
+    </td>
+  </tr>
+  <tr>
+    <td>VOLUME_{NAME}_DELTAS</td>
+    <td>Yes</td>
+    <td></td>
+    <td>
+      The deltas for this volume.
+    </td>
+  </tr>
+  <tr>
+    <td>VOLUME_{NAME}_ZONE</td>
+    <td>Yes</td>
+    <td></td>
+    <td>
+      The zone for this volume.
+    </td>
+  </tr>
 </table>

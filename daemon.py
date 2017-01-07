@@ -20,11 +20,11 @@ import logbook
 from asyncutils import combine, combine_latest, iterate_in_executor, exec
 
 
-# TODO: A solution to backup normal volumes, non-persistent?
 # TODO: prevent a backup loop: A failsafe mechanism to make sure we
 #   don't create more than x snapshots per disk; in case something
 #   is wrong with the code that loads the exsting snapshots from GCloud.
-#
+# TODO: Support http ping after every backup.
+# TODO: Support loading configuration from a configmap.
 
 logger = logbook.Logger('daemon')
 
@@ -259,7 +259,7 @@ def sync_get_rules(ctx):
 
 async def get_rules(ctx):
     async for item in iterate_in_executor(sync_get_rules, ctx):
-        yield item
+        yield ctx.config.get('rules') + item
 
 
 async def load_snapshots(ctx):
@@ -377,7 +377,7 @@ async def scheduler(ctx, scheduling_chan, snapshot_reload_trigger):
     logger.info('Started scheduler task')
 
     async for schedule in watch_schedule(ctx, snapshot_reload_trigger):
-        logger.debug('scheduler determined a new target backup')
+        logger.debug('Scheduler determined a new target backup')
         await scheduling_chan.put(schedule)
 
 
@@ -436,11 +436,49 @@ async def daemon(config):
     await asyncio.gather(schedule_task, backup_task)
 
 
+def read_volume_config():
+    """Read the volume configuration from the environment
+    """
+    def read_volume(name):
+        deltas = os.environ.get('VOLUME_{}_DELTAS'.format(name.upper()))
+        if not deltas:
+            raise ConfigError('A volume {} was defined, but no deltas'.format(name))
+
+
+        zone = os.environ.get('VOLUME_{}_ZONE'.format(
+            name.replace('-', '_').upper()))
+        if not zone:
+            raise ConfigError('A volume {} was defined, but no zone'.format(name))
+
+        logger.info('Loading env-defined volume {} with deltas {}', name, deltas)
+
+        rule = Rule()
+        rule.name = name
+        rule.namespace = ''
+        rule.deltas = parse_deltas(deltas)
+        rule.deltas_unparsed = deltas
+        rule.gce_disk = name
+        rule.gce_disk_zone = zone
+        return rule
+
+    volumes = map(lambda s: s.strip(), os.environ.get('VOLUMES').split(','))
+    config = {}
+    config['rules'] = list(filter(bool, map(read_volume, volumes)))
+    return config
+
+
 def main():
     config = DEFAULT_CONFIG.copy()
     config.update(confcollect.from_environ(by_defaults=DEFAULT_CONFIG))
 
     logbook.StderrHandler(level=config['log_level']).push_application()
+
+    # Read manual volume definitions
+    try:
+        config.update(read_volume_config())
+    except ValueError as e:
+        logger.error(e)
+        return 1
 
     if not validate_config(config):
         return 1
