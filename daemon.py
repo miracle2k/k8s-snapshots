@@ -25,6 +25,7 @@ from asyncutils import combine, combine_latest, iterate_in_executor, exec
 #   is wrong with the code that loads the exsting snapshots from GCloud.
 # TODO: Support http ping after every backup.
 # TODO: Support loading configuration from a configmap.
+# TODO: We could use a third party resource type, too.
 
 logger = logbook.Logger('daemon')
 
@@ -440,13 +441,13 @@ def read_volume_config():
     """Read the volume configuration from the environment
     """
     def read_volume(name):
-        deltas = os.environ.get('VOLUME_{}_DELTAS'.format(name.upper()))
+        env_name = name.replace('-', '_').upper()
+        deltas = os.environ.get('VOLUME_{}_DELTAS'.format(env_name))
         if not deltas:
             raise ConfigError('A volume {} was defined, but no deltas'.format(name))
 
 
-        zone = os.environ.get('VOLUME_{}_ZONE'.format(
-            name.replace('-', '_').upper()))
+        zone = os.environ.get('VOLUME_{}_ZONE'.format(env_name))
         if not zone:
             raise ConfigError('A volume {} was defined, but no zone'.format(name))
 
@@ -461,7 +462,7 @@ def read_volume_config():
         rule.gce_disk_zone = zone
         return rule
 
-    volumes = map(lambda s: s.strip(), os.environ.get('VOLUMES').split(','))
+    volumes = filter(bool, map(lambda s: s.strip(), os.environ.get('VOLUMES', '').split(',')))
     config = {}
     config['rules'] = list(filter(bool, map(read_volume, volumes)))
     return config
