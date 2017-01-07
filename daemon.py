@@ -149,11 +149,13 @@ def determine_next_snapshot(snapshots, rules):
 
         # There are no snapshots for this rule; create the first one.
         if not filtered:
+            logger.debug('No snapshot yet for {}, creating one now', rule)
             next_rule = rule
             next_timestamp = pendulum.now('utc') + timedelta(seconds=10)
             break
 
         target = filtered[0] + rule.deltas[0]
+        logger.debug('Next backup for {} is {}', rule, target)
         if not next_timestamp or target < next_timestamp:
             next_rule = rule
             next_timestamp =target
