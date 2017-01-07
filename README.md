@@ -1,15 +1,21 @@
 Automatic Volume Snapshots on Kubernetes / Google Container Engine
 ==================================================================
 
-The purpose of this tool is to backup persistent volumes in Kubernetes.
-It does so, currently, only for Google Compute Engine Disks, by
-creating regular snapshots, and expiring old snapshots using a GFS
-scheme.
+1. You add an annotation to your Kubernetes `PersistentVolume` resource,
+   to indicate how many backups should be kept.
+2. This tool will create and expire snapshots to match the desired
+   configuration.
 
-It works like this:
+Currently, only the following setup is supported:
+
+- Google Compute Engine disks.
+
+
+How it works
+------------
 
 1. Run it as a service, preferable inside your Kubernetes cluster.
-2. It will watch PersistentVolume resources and check those for an
+2. It will watch `PersistentVolume` resources and check those for an
    annotation named `backup.kubernetes.io/deltas`, which would have
    a value such as `1d 7d 30d`.
 3. For every `PersistentVolume` that defines this annotation, and is
