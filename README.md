@@ -137,6 +137,25 @@ Provide environment variables to configure these.
     <td>DEBUG, INFO, WARNING, ERROR</td>
   </tr>
   <tr>
+    <td>SLACK_API_TOKEN</td>
+    <td>No</td>
+    <td></td>
+    <td>
+      Slack API token for sending notifications.<br />
+      Must also provide SLACK_CHANNEL.
+    </td>
+  </tr>
+  <tr>
+    <td>SLACK_CHANNEL</td>
+    <td>No</td>
+    <td></td>
+    <td>
+      Slack channel for sending notifications.<br />
+      Example: #mon-test-kube.<br />
+      Must also provide SLACK_API_TOKEN.
+    </td>
+  </tr>
+  <tr>
     <td>VOLUMES</td>
     <td>No</td>
     <td></td>

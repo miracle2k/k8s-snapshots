@@ -5,3 +5,4 @@ aiochannel==0.2.2
 logbook==1.0.0
 pendulum==0.8.0
 confcollect==0.2.3
+aslack==0.10.0

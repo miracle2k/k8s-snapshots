@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import asyncio
 import confcollect
 from aiochannel import Channel, ChannelEmpty
+from aslack.slack_api import SlackApi
 from googleapiclient import discovery
 from oauth2client.client import GoogleCredentials
 from oauth2client.service_account import ServiceAccountCredentials
@@ -39,6 +40,8 @@ DEFAULT_CONFIG = {
     'gcloud_json_keyfile_name': '',
     'gcloud_json_keyfile_string': '',
     'kube_config_file': '',
+    'slack_api_token': '',
+    'slack_channel': '',
     'use_claim_name': False
 }
 
@@ -321,6 +324,8 @@ async def make_backup(ctx, rule):
     logbook.info('Creating a snapshot for disk {} with name {}',
         rule.name, name)
 
+    await report_snapshot_to_slack(ctx, rule, name, 'Creating')
+
     result = await exec(ctx.gcloud.disks().createSnapshot(
         disk=rule.gce_disk,
         project=ctx.config['gcloud_project'],
@@ -342,7 +347,26 @@ async def make_backup(ctx, rule):
         logger.error('Snapshot status is unexpected: {}', result['status'])
         return
 
+    await report_snapshot_to_slack(ctx, rule, name, 'Created')
+
     await expire_snapshots(ctx, rule)
+
+
+async def report_snapshot_to_slack(ctx, rule, name, action):
+    if ctx.config.get('slack_api_token') and ctx.config.get('slack_channel'):
+        slack_api = SlackApi(api_token=ctx.config.get('slack_api_token'))
+
+        disk_url = 'https://console.cloud.google.com/compute/disksDetail/zones/{}/disks/{}?project={}'.format(
+            rule.gce_disk_zone, rule.gce_disk, ctx.config['gcloud_project'])
+        snapshot_url = 'https://console.cloud.google.com/compute/snapshotsDetail/projects/{}/global/snapshots/{}?project={}'.format(
+            ctx.config['gcloud_project'], name, ctx.config['gcloud_project'])
+
+        return await slack_api.execute_method(
+            'chat.postMessage',
+            channel='#' + ctx.config.get('slack_channel'),
+            text='{} snapshot for disk <{}|{}> named <{}|{}>.'.format( 
+                action, disk_url, rule.name, snapshot_url, name)
+        )
 
 
 async def expire_snapshots(ctx, rule):
