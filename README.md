@@ -88,6 +88,14 @@ Provide environment variables to configure these.
     <td>Name of the Google Cloud project</td>
   </tr>
   <tr>
+    <td>GCLOUD_APPLICATION_DEFAULT_CREDENTIALS</td>
+    <td>One GCloud auth method is required</td>
+    <td>False</td>
+    <td>
+      Uses application defaults if running on GKE.
+    </td>
+  </tr>
+  <tr>
     <td>GCLOUD_JSON_KEYFILE_NAME</td>
     <td>One GCloud auth method is required</td>
     <td></td>
@@ -127,6 +135,25 @@ Provide environment variables to configure these.
     <td>No</td>
     <td>INFO</td>
     <td>DEBUG, INFO, WARNING, ERROR</td>
+  </tr>
+  <tr>
+    <td>SLACK_API_TOKEN</td>
+    <td>No</td>
+    <td></td>
+    <td>
+      Slack API token for sending notifications.<br />
+      Must also provide SLACK_CHANNEL.
+    </td>
+  </tr>
+  <tr>
+    <td>SLACK_CHANNEL</td>
+    <td>No</td>
+    <td></td>
+    <td>
+      Slack channel for sending notifications.<br />
+      Example: #mon-test-kube.<br />
+      Must also provide SLACK_API_TOKEN.
+    </td>
   </tr>
   <tr>
     <td>VOLUMES</td>

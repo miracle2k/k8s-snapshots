@@ -1,5 +1,10 @@
 FROM python:3.6
 
+WORKDIR /app
+
+ADD requirements.txt /app/
+RUN pip install -r requirements.txt
+
 ADD . /app
-RUN pip install -r /app/requirements.txt
+
 ENTRYPOINT /app/daemon.py
