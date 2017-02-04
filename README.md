@@ -88,6 +88,14 @@ Provide environment variables to configure these.
     <td>Name of the Google Cloud project</td>
   </tr>
   <tr>
+    <td>GCLOUD_APPLICATION_DEFAULT_CREDENTIALS</td>
+    <td>One GCloud auth method is required</td>
+    <td>False</td>
+    <td>
+      Uses application defaults if running on GKE.
+    </td>
+  </tr>
+  <tr>
     <td>GCLOUD_JSON_KEYFILE_NAME</td>
     <td>One GCloud auth method is required</td>
     <td></td>

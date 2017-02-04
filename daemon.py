@@ -11,6 +11,7 @@ import asyncio
 import confcollect
 from aiochannel import Channel, ChannelEmpty
 from googleapiclient import discovery
+from oauth2client.client import GoogleCredentials
 from oauth2client.service_account import ServiceAccountCredentials
 from tarsnapper.config import parse_deltas, ConfigError
 from tarsnapper.expire import expire
@@ -32,6 +33,7 @@ logger = logbook.Logger('daemon')
 
 DEFAULT_CONFIG = {
     'log_level': 'INFO',
+    'gcloud_application_default_credentials': False,
     'gcloud_project': '',
     'gcloud_json_keyfile_name': '',
     'gcloud_json_keyfile_string': '',
@@ -95,6 +97,9 @@ class Context:
             keyfile = json.loads(self.config.get('gcloud_json_keyfile_string'))
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(
                 keyfile, scopes=SCOPES)
+
+        if self.config.get('gcloud_application_default_credentials'):
+            credentials = GoogleCredentials.get_application_default()
 
         if not credentials:
             raise RuntimeError("Auth for Google Cloud was not configured")
