@@ -275,7 +275,7 @@ async def get_rules(ctx):
 
 async def load_snapshots(ctx):
     r = await exec(ctx.gcloud.snapshots().list(project=ctx.config['gcloud_project']).execute)
-    return r['items']
+    return r.get('items', [])
 
 
 async def get_snapshots(ctx, reload_trigger):
