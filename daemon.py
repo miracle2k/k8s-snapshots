@@ -168,7 +168,7 @@ def determine_next_snapshot(snapshots, rules):
 DELTA_ANNOTATION_KEY = 'backup.kubernetes.io/deltas'
 
 
-def rule_from_pv(volume, use_claim_name=False):
+def rule_from_pv(volume, api, use_claim_name=False):
     """Given a persistent volume object, create a backup role
     object. Can return None if this volume is not configured for
     backups, or is not suitable.
@@ -178,11 +178,6 @@ def rule_from_pv(volume, use_claim_name=False):
     for the snapshot.
     """
 
-    # TODO: Currently, K8s does not allow a PersistentVolumeClaim to
-    # specify any annotations for the PersistentVolume a provisioner
-    # would create. Indeed, this might ever be possible. We might
-    # want to follow the claimRef link and see if the claim specifies
-    # any rules, and then use those.
     provider = volume.annotations.get('pv.kubernetes.io/provisioned-by')
     if provider != 'kubernetes.io/gce-pd':
         logger.debug('Volume {} not a GCE persistent disk', volume.name)
@@ -192,7 +187,22 @@ def rule_from_pv(volume, use_claim_name=False):
     if not deltas_unparsed:
         logger.debug('Volume {} does not define backup deltas (via {})',
             volume.name, DELTA_ANNOTATION_KEY)
-        return
+
+        # If volume is not annotated, attempt ot read deltas from
+        # PersistentVolumeClaim referenced in volume.claimRef
+        if 'claimRef' not in volume.obj['spec']:
+            logger.debug(
+                'Volume {} does not contain a claimRef nor does it define deltas', volume.name)
+            return
+
+        ref = volume.obj['spec']['claimRef']
+        pvc = pykube.objects.PersistentVolumeClaim.objects(api).filter(
+            namespace=ref['namespace']).get_or_none(name=ref['name'])
+        if pvc is None:
+            logger.debug(
+                'Volume claim {} for volume {} does not exist', ref['name'], volume.name)
+            return
+        deltas_unparsed = pvc.annotations.get('backup.kubernetes.io/deltas')
 
     try:
         deltas = parse_deltas(deltas_unparsed)
@@ -239,7 +249,7 @@ def sync_get_rules(ctx):
 
         if event.type == 'ADDED' or event.type == 'MODIFIED':
             rule = rule_from_pv(
-                event.object, use_claim_name=ctx.config.get('use_claim_name'))
+                event.object, api, use_claim_name=ctx.config.get('use_claim_name'))
             if rule:
                 if event.type == 'ADDED' or not vid in rules:
                     logger.info('Volume {} added to list of backup jobs with deltas {}',
