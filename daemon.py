@@ -10,7 +10,9 @@ from datetime import datetime, timedelta
 import asyncio
 import confcollect
 from aiochannel import Channel, ChannelEmpty
+from aslack.slack_api import SlackApi
 from googleapiclient import discovery
+from oauth2client.client import GoogleCredentials
 from oauth2client.service_account import ServiceAccountCredentials
 from tarsnapper.config import parse_deltas, ConfigError
 from tarsnapper.expire import expire
@@ -18,6 +20,7 @@ import pykube
 import pendulum
 import logbook
 from asyncutils import combine, combine_latest, iterate_in_executor, exec
+import pykube_objects
 
 
 # TODO: prevent a backup loop: A failsafe mechanism to make sure we
@@ -32,10 +35,13 @@ logger = logbook.Logger('daemon')
 
 DEFAULT_CONFIG = {
     'log_level': 'INFO',
+    'gcloud_application_default_credentials': False,
     'gcloud_project': '',
     'gcloud_json_keyfile_name': '',
     'gcloud_json_keyfile_string': '',
     'kube_config_file': '',
+    'slack_api_token': '',
+    'slack_channel': '',
     'use_claim_name': False
 }
 
@@ -95,6 +101,9 @@ class Context:
             keyfile = json.loads(self.config.get('gcloud_json_keyfile_string'))
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(
                 keyfile, scopes=SCOPES)
+
+        if self.config.get('gcloud_application_default_credentials'):
+            credentials = GoogleCredentials.get_application_default()
 
         if not credentials:
             raise RuntimeError("Auth for Google Cloud was not configured")
@@ -168,7 +177,7 @@ def determine_next_snapshot(snapshots, rules):
 DELTA_ANNOTATION_KEY = 'backup.kubernetes.io/deltas'
 
 
-def rule_from_pv(volume, use_claim_name=False):
+def rule_from_pv(volume, storage_class, use_claim_name=False):
     """Given a persistent volume object, create a backup role
     object. Can return None if this volume is not configured for
     backups, or is not suitable.
@@ -183,9 +192,9 @@ def rule_from_pv(volume, use_claim_name=False):
     # would create. Indeed, this might ever be possible. We might
     # want to follow the claimRef link and see if the claim specifies
     # any rules, and then use those.
-    provider = volume.annotations.get('pv.kubernetes.io/provisioned-by')
-    if provider != 'kubernetes.io/gce-pd':
-        logger.debug('Volume {} not a GCE persistent disk', volume.name)
+    provisioner = storage_class.get('provisioner')
+    if provisioner != 'kubernetes.io/gce-pd':
+        logger.debug('Volume {volume} not a GCE persistent disk (provisioner={provisioner})'.format(volume=volume.name, provisioner=provisioner))
         return
 
     deltas_unparsed = volume.annotations.get('backup.kubernetes.io/deltas')
@@ -208,16 +217,10 @@ def rule_from_pv(volume, use_claim_name=False):
     rule.deltas_unparsed = deltas_unparsed
     rule.gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
 
-    # How can we know the zone? In theory, the storage class can
-    # specify a zone; but if not specified there, K8s can choose a
-    # random zone within the master region. So we really can't trust
-    # that value anyway.
-    # There is a label that gives a failure region, but labels aren't
-    # really a trustworthy source for this.
-    # Apparently, this is a thing in the Kubernetes source too, see:
-    # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
-    # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
-    rule.gce_disk_zone = volume.labels.get('failure-domain.beta.kubernetes.io/zone')
+    # We assume that a zone is specified in the PersistentVolume, and that it is correct.
+    # Note: The zone supplied in the StorageClass spec is not enforeced, so it has
+    # to match the persistent disk for this to work.
+    rule.gce_disk_zone = storage_class.get('parameters').get('zone')
 
     if use_claim_name and volume.obj['spec'].get('claimRef'):
         if volume.annotations.get('kubernetes.io/createdby') == 'gce-pd-dynamic-provisioner':
@@ -235,11 +238,15 @@ def sync_get_rules(ctx):
 
     for event in stream:
         logger.debug('Event in persistent volume stream: {}', event)
+
+        storage_class_name = event.object.annotations.get('volume.beta.kubernetes.io/storage-class')
+        storage_class = pykube_objects.StorageClass.objects(api).get_by_name(storage_class_name)
+
         vid = event.object.name
 
         if event.type == 'ADDED' or event.type == 'MODIFIED':
             rule = rule_from_pv(
-                event.object, use_claim_name=ctx.config.get('use_claim_name'))
+                event.object, storage_class.obj, use_claim_name=ctx.config.get('use_claim_name'))
             if rule:
                 if event.type == 'ADDED' or not vid in rules:
                     logger.info('Volume {} added to list of backup jobs with deltas {}',
@@ -264,6 +271,7 @@ async def get_rules(ctx):
 
 
 async def load_snapshots(ctx):
+    # TODO: handle when there are no results.
     r = await exec(ctx.gcloud.snapshots().list(project=ctx.config['gcloud_project']).execute)
     return r['items']
 
@@ -316,6 +324,8 @@ async def make_backup(ctx, rule):
     logbook.info('Creating a snapshot for disk {} with name {}',
         rule.name, name)
 
+    await report_snapshot_to_slack(ctx, rule, name, 'Creating')
+
     result = await exec(ctx.gcloud.disks().createSnapshot(
         disk=rule.gce_disk,
         project=ctx.config['gcloud_project'],
@@ -337,7 +347,26 @@ async def make_backup(ctx, rule):
         logger.error('Snapshot status is unexpected: {}', result['status'])
         return
 
+    await report_snapshot_to_slack(ctx, rule, name, 'Created')
+
     await expire_snapshots(ctx, rule)
+
+
+async def report_snapshot_to_slack(ctx, rule, name, action):
+    if ctx.config.get('slack_api_token') and ctx.config.get('slack_channel'):
+        slack_api = SlackApi(api_token=ctx.config.get('slack_api_token'))
+
+        disk_url = 'https://console.cloud.google.com/compute/disksDetail/zones/{}/disks/{}?project={}'.format(
+            rule.gce_disk_zone, rule.gce_disk, ctx.config['gcloud_project'])
+        snapshot_url = 'https://console.cloud.google.com/compute/snapshotsDetail/projects/{}/global/snapshots/{}?project={}'.format(
+            ctx.config['gcloud_project'], name, ctx.config['gcloud_project'])
+
+        return await slack_api.execute_method(
+            'chat.postMessage',
+            channel='#' + ctx.config.get('slack_channel'),
+            text='{} snapshot for disk <{}|{}> named <{}|{}>.'.format( 
+                action, disk_url, rule.name, snapshot_url, name)
+        )
 
 
 async def expire_snapshots(ctx, rule):
