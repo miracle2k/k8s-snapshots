@@ -444,12 +444,12 @@ def read_volume_config():
         env_name = name.replace('-', '_').upper()
         deltas = os.environ.get('VOLUME_{}_DELTAS'.format(env_name))
         if not deltas:
-            raise ConfigError('A volume {} was defined, but no deltas'.format(name))
+            raise ConfigError('A volume {} was defined, but {} is not set'.format(name, env_name))
 
 
         zone = os.environ.get('VOLUME_{}_ZONE'.format(env_name))
         if not zone:
-            raise ConfigError('A volume {} was defined, but no zone'.format(name))
+            raise ConfigError('A volume {} was defined, but {} is not set'.format(name, env_name))
 
         logger.info('Loading env-defined volume {} with deltas {}', name, deltas)
 
