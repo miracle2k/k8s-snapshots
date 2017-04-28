@@ -239,10 +239,17 @@ def sync_get_rules(ctx):
     for event in stream:
         logger.debug('Event in persistent volume stream: {}', event)
 
+        vid = event.object.name
+
         storage_class_name = event.object.annotations.get('volume.beta.kubernetes.io/storage-class')
+
+        if not storage_class_name:
+            logger.debug('Skipping volume with no StorageClass.')
+            rules.pop(vid, False)
+            continue
+
         storage_class = pykube_objects.StorageClass.objects(api).get_by_name(storage_class_name)
 
-        vid = event.object.name
 
         if event.type == 'ADDED' or event.type == 'MODIFIED':
             rule = rule_from_pv(
