@@ -198,15 +198,27 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
             namespace=ref['namespace']).get_or_none(name=ref['name'])
         if pvc is None:
             logger.debug(
-                'Volume claim {} for volume {} does not exist', ref['name'], volume.name)
+                'Volume claim {} for volume {} does not exist',
+                ref['name'],
+                volume.name,
+            )
             return
         deltas_unparsed = pvc.annotations.get(deltas_annotation_key)
 
     try:
         deltas = parse_deltas(deltas_unparsed)
+
+        if not deltas:
+            raise ConfigError(
+                'parse_deltas did not raise, but returned invalid deltas: '
+                '{!r}'.format(deltas)
+            )
     except ConfigError as e:
-        logger.error('Deltas defined by volume {} are not valid, error message was: {}',
-            volume.name, e)
+        logger.error(
+            'Deltas defined by volume {} are not valid, error message was: {}',
+            volume.name,
+            e,
+        )
         return
 
     rule = Rule()
