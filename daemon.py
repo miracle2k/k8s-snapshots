@@ -36,7 +36,8 @@ DEFAULT_CONFIG = {
     'gcloud_json_keyfile_name': '',
     'gcloud_json_keyfile_string': '',
     'kube_config_file': '',
-    'use_claim_name': False
+    'use_claim_name': False,
+    'deltas_annotation_key': 'backup.kubernetes.io/deltas'
 }
 
 
@@ -165,10 +166,7 @@ def determine_next_snapshot(snapshots, rules):
     return next_rule, next_timestamp
 
 
-DELTA_ANNOTATION_KEY = 'backup.kubernetes.io/deltas'
-
-
-def rule_from_pv(volume, api, use_claim_name=False):
+def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
     """Given a persistent volume object, create a backup role
     object. Can return None if this volume is not configured for
     backups, or is not suitable.
@@ -183,10 +181,10 @@ def rule_from_pv(volume, api, use_claim_name=False):
         logger.debug('Volume {} not a GCE persistent disk', volume.name)
         return
 
-    deltas_unparsed = volume.annotations.get('backup.kubernetes.io/deltas')
+    deltas_unparsed = volume.annotations.get(deltas_annotation_key)
     if not deltas_unparsed:
         logger.debug('Volume {} does not define backup deltas (via {})',
-            volume.name, DELTA_ANNOTATION_KEY)
+            volume.name, deltas_annotation_key)
 
         # If volume is not annotated, attempt ot read deltas from
         # PersistentVolumeClaim referenced in volume.claimRef
@@ -202,7 +200,7 @@ def rule_from_pv(volume, api, use_claim_name=False):
             logger.debug(
                 'Volume claim {} for volume {} does not exist', ref['name'], volume.name)
             return
-        deltas_unparsed = pvc.annotations.get('backup.kubernetes.io/deltas')
+        deltas_unparsed = pvc.annotations.get(deltas_annotation_key)
 
     try:
         deltas = parse_deltas(deltas_unparsed)
@@ -249,7 +247,10 @@ def sync_get_rules(ctx):
 
         if event.type == 'ADDED' or event.type == 'MODIFIED':
             rule = rule_from_pv(
-                event.object, api, use_claim_name=ctx.config.get('use_claim_name'))
+                event.object,
+                api,
+                ctx.config.get('deltas_annotation_key'),
+                use_claim_name=ctx.config.get('use_claim_name'))
             if rule:
                 if event.type == 'ADDED' or not vid in rules:
                     logger.info('Volume {} added to list of backup jobs with deltas {}',
