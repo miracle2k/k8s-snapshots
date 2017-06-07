@@ -1,7 +1,11 @@
 # Consider: https://github.com/vxgmichel/aiostream
 
 import asyncio
+
+import structlog
 from aiochannel import Channel
+
+_logger = structlog.get_logger()
 
 
 async def exec(func):
@@ -13,12 +17,15 @@ async def combine(**generators):
     all of them. Each should have a name, i.e. `foo=gen, bar=gen`.
     """
     combined = Channel()
+
     async def listen_and_forward(name, generator):
         async for value in generator:
             await combined.put({name: value})
+
     tasks = []
     for name, generator in generators.items():
         task = asyncio.ensure_future(listen_and_forward(name, generator))
+
         # When task one or fails, close channel so that later our
         # iterator stops reading.
         def cb(task):
@@ -53,24 +60,3 @@ async def combine_latest(defaults=None, **generators):
         yield current
 
 
-async def iterate_in_executor(sync_iter, *args):
-    """run_in_executor returns a future. But what if the function
-    we call is supposed to return values iteratively?
-    """
-    loop = asyncio.get_event_loop()
-    channel = Channel()
-    def forward_iter(*a):
-        try:
-            # TODO: We are looking for a solution to stop this
-            # if the channel is closed. Should this thread use it's
-            # own event loop where we can use await?
-            for value in sync_iter(*a):
-                asyncio.ensure_future(channel.put(value), loop=loop)
-        finally:
-            channel.close()
-    result = asyncio.get_event_loop().run_in_executor(None, forward_iter, *args)
-    async for item in channel:
-        yield item
-
-    # Any exceptions would be retrieved here
-    await result

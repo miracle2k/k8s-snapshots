@@ -3,5 +3,7 @@ pykube==0.14.0
 tarsnapper==0.4.0
 aiochannel==0.2.2
 logbook==1.0.0
+structlog==17.2.0
+attrs==17.2.0
 pendulum==0.8.0
 confcollect==0.2.3
