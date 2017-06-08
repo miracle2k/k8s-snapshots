@@ -200,7 +200,7 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
     )
 
     provider = volume.annotations.get('pv.kubernetes.io/provisioned-by')
-    _log = _log.new(provider=provider)
+    _log = _log.bind(provider=provider)
     if provider != 'kubernetes.io/gce-pd':
         _log.debug('Volume not a GCE persistent disk', volume=volume)
         return
@@ -209,7 +209,9 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
     _log = _log.bind(deltas_str=deltas_unparsed)
 
     if deltas_unparsed is None:
-        _log.info('rule.from-pv.deltas-missing')
+        _log.info(
+            'rule.from-pv.deltas-missing',
+            key_hint='volume.metadata.name')
         return
 
     try:
@@ -222,7 +224,7 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
                 '{!r}'.format(deltas)
             )
     except ConfigError as e:
-        _log.error(
+        _log.exception(
             'rule.from-pv.deltas-invalid',
             error=e,
         )
@@ -257,7 +259,7 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
         claim_name=claim_name,
     )
 
-    _log.info('rule.from-pv', rule=rule.to_dict())
+    _log.info('rule.from-pv', key_hint='volume.metadata.name', rule=rule.to_dict())
 
     return rule
 

@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from json import JSONEncoder
 
 import logbook
@@ -25,6 +26,54 @@ def configure_logging(config):
             )
         return logbook.Logger(name, level=level)
 
+    def add_message(logger, method_name, event_dict):
+        """
+        Creates a ``message`` value based on the ``hint`` and ``key_hint`` keys.
+
+        ``key_hint`` : ``Optional[str]``
+            a '.'-separated path of dictionary keys.
+
+        ``hint`` : ``Optional[str]``
+            will be formatted using ``.format(**event_dict)``.
+        """
+        def from_key_hint(ed):
+            key_hint = ed.get('key_hint')
+            if key_hint is None:
+                return
+
+            value = ed
+
+            for key in key_hint.split('.'):
+                if value is None:
+                    break
+                value = value.get(key)
+
+            return f'{key_hint}={value!r}'
+
+        def from_hint(ed):
+            hint = event_dict.get('hint')
+            if hint is None:
+                return
+
+            try:
+                return hint.format(**event_dict)
+            except Exception as exc:
+                return f'! error formatting message: {exc!r}'
+
+        hints = [
+            from_hint(event_dict),
+            from_key_hint(event_dict)
+        ]
+
+        if all(hint is None for hint in hints):
+            return event_dict
+
+        prefix = event_dict['event']
+        hint = ', '.join(hint for hint in hints if hint is not None)
+
+        event_dict['message'] = f'{prefix}: {hint}'
+        return event_dict
+
     def add_severity(logger, method_name, event_dict):
         if method_name == 'warn':
             method_name = 'warning'
@@ -41,6 +90,23 @@ def configure_logging(config):
 
         return event_dict
 
+    def order_keys(order):
+        """
+        Order keys for JSON readability when not using structlog_dev=True
+        """
+        def processor(logger, method_name, event_dict):
+            if not isinstance(event_dict, OrderedDict):
+                return event_dict
+
+            for key in reversed(order):
+                if key in event_dict:
+                    event_dict.move_to_end(key, last=False)
+
+            return event_dict
+        return processor
+
+    key_order = ['event', 'level', 'message']
+
     if config['structlog_dev']:
         structlog.configure(
             processors=[
@@ -51,9 +117,11 @@ def configure_logging(config):
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
                 add_func_name,
+                add_message,
+                order_keys(key_order),
                 structlog.dev.ConsoleRenderer()  # <===
             ],
-            context_class=dict,
+            context_class=OrderedDict,
             logger_factory=logger_factory,
             wrapper_class=structlog.stdlib.BoundLogger,
             cache_logger_on_first_use=True,
@@ -65,17 +133,18 @@ def configure_logging(config):
             processors=[
                 add_severity,
                 structlog.stdlib.add_logger_name,
+                structlog.processors.TimeStamper(fmt='ISO'),
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
-                structlog.processors.TimeStamper(fmt='ISO'),
                 add_func_name,
+                add_message,
+                order_keys(key_order),
                 structlog.processors.JSONRenderer(
                     indent=indent,
-                    sort_keys=True,
                     cls=TimeDeltaEncoder,
                 )
             ],
-            # context_class=dict,
+            context_class=OrderedDict,
             wrapper_class=structlog.stdlib.BoundLogger,
             logger_factory=logger_factory,
             cache_logger_on_first_use=True,
