@@ -3,6 +3,7 @@
 backup expiration logic is already in tarsnapper and well tested.
 """
 import asyncio
+import re
 import os
 import threading
 from datetime import timedelta
@@ -405,10 +406,14 @@ async def make_backup(ctx, rule):
     2. Wait until the snapshot is finished.
     3. Expire old snapshots
     """
-    name = '{}-{}'.format(
-        rule.pretty_name, pendulum.now('utc').format('%d%m%y-%H%M%S'))
+    snapshot_time_str = re.sub(
+        r'[^a-z0-9-]', '-',
+        pendulum.now('utc').format(ctx.config['snapshot_datetime_format']),
+        flags=re.IGNORECASE)
+    snapshot_name = f'{rule.pretty_name}-{snapshot_time_str}'
+
     _log = _logger.new(
-        snapshot_name=name,
+        snapshot_name=snapshot_name,
         rule=rule.to_dict()
     )
 
@@ -418,7 +423,7 @@ async def make_backup(ctx, rule):
             disk=rule.gce_disk,
             project=ctx.config['gcloud_project'],
             zone=rule.gce_disk_zone,
-            body={"name": name}).execute)
+            body={"name": snapshot_name}).execute)
     except Exception as exc:
         _log.exception('snapshot.start.error')
         raise errors.SnapshotCreateError('Call to API raised an error') from exc
@@ -436,7 +441,7 @@ async def make_backup(ctx, rule):
         await asyncio.sleep(2)
         _log.debug('snapshot.status.poll')
         result = await exec(ctx.gcloud.snapshots().get(
-            snapshot=name,
+            snapshot=snapshot_name,
             project=ctx.config['gcloud_project']).execute)
         _log.debug('snapshot.status.polled', result)
 
