@@ -16,6 +16,9 @@ def main():
 
     configure_logging(config)
 
+    if config['debug']:
+        sys.excepthook = debug_excepthook
+
     # Late import to keep module-level get_logger after configure_logging
     from k8s_snapshots.core import read_volume_config, daemon
     _logger = structlog.get_logger(__name__)
@@ -43,7 +46,6 @@ def main():
 
     def handle_signal(name, timeout=10):
         _log.info('Received signal', signal_name=name)
-        print_tasks()
 
         if main_task.cancelled():
             _log.info('main task already cancelled, forcing a quit')
@@ -65,10 +67,19 @@ def main():
         loop.run_until_complete(main_task)
     except asyncio.CancelledError:
         _log.exception('main task cancelled')
-    except Exception:
+    except Exception as exc:
         _log.exception('Unhandled exception in main task')
+        raise
     finally:
         loop.run_until_complete(shutdown(loop=loop))
+
+
+def debug_excepthook(exc_type, exc, exc_tb):
+    import pdb
+    loop = asyncio.get_event_loop()
+    loop.stop()
+    pdb.post_mortem(exc_tb)
+    sys.__excepthook__(exc_type, exc, exc_tb)
 
 
 _shutdown = False
@@ -93,7 +104,8 @@ async def shutdown(*, loop=None):
 
 
 def print_tasks():
-    structlog.get_logger().debug('print tasks', task=asyncio.Task.all_tasks())
+    tasks = list(asyncio.Task.all_tasks())
+    structlog.get_logger().debug('print tasks', tasks=tasks)
 
 
 if __name__ == '__main__':

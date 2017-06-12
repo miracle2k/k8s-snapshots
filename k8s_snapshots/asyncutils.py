@@ -8,7 +8,7 @@ from aiochannel import Channel
 _logger = structlog.get_logger()
 
 
-async def exec(func):
+async def run_in_executor(func):
     return await asyncio.get_event_loop().run_in_executor(None, func)
 
 

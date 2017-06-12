@@ -3,22 +3,24 @@
 backup expiration logic is already in tarsnapper and well tested.
 """
 import asyncio
+import functools
 import re
 import os
 import threading
 from datetime import timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Iterable
 
 import attr
 import pendulum
 import pykube
 import structlog
+
 from aiochannel import Channel, ChannelEmpty
 from tarsnapper.config import parse_deltas, ConfigError
 from tarsnapper.expire import expire
 
-from k8s_snapshots import errors
-from k8s_snapshots.asyncutils import combine_latest, exec
+from k8s_snapshots import errors, events
+from k8s_snapshots.asyncutils import combine_latest, run_in_executor
 # TODO: prevent a backup loop: A failsafe mechanism to make sure we
 #   don't create more than x snapshots per disk; in case something
 #   is wrong with the code that loads the exsting snapshots from GCloud.
@@ -26,6 +28,8 @@ from k8s_snapshots.asyncutils import combine_latest, exec
 # TODO: Support loading configuration from a configmap.
 # TODO: We could use a third party resource type, too.
 from k8s_snapshots.context import Context
+from k8s_snapshots.errors import AnnotationNotFound, AnnotationError, \
+    UnsupportedVolume
 
 _logger = structlog.get_logger()
 
@@ -39,7 +43,6 @@ class Rule:
     name = attr.ib()
     namespace = attr.ib()
     deltas = attr.ib()
-    deltas_unparsed = attr.ib()
     gce_disk = attr.ib()
     gce_disk_zone = attr.ib()
     claim_name = attr.ib()
@@ -56,7 +59,7 @@ class Rule:
         return self.name
 
 
-def filter_snapshots_by_rule(snapshots, rule):
+def filter_snapshots_by_rule(snapshots, rule) -> Iterable:
     def match_disk(snapshot):
         url_part = '/zones/{zone}/disks/{name}'.format(
             zone=rule.gce_disk_zone, name=rule.gce_disk)
@@ -75,7 +78,7 @@ def determine_next_snapshot(snapshots, rules):
     next_timestamp = None
 
     for rule in rules:
-        _log = _logger.new(rule=rule.to_dict())
+        _log = _logger.new(rule=rule)
         # Find all the snapshots that match this rule
         filtered = filter_snapshots_by_rule(snapshots, rule)
         # Rewrite the list to snapshot
@@ -86,104 +89,32 @@ def determine_next_snapshot(snapshots, rules):
 
         # There are no snapshots for this rule; create the first one.
         if not filtered:
-            _logger.debug('No snapshot yet for rule, it will be next')
             next_rule = rule
             next_timestamp = pendulum.now('utc') + timedelta(seconds=10)
+            _log.info(
+                events.Snapshot.SCHEDULED,
+                target=next_timestamp,
+                key_hints=['rule'],
+            )
             break
 
         target = filtered[0] + rule.deltas[0]
-        _logger.debug('Next snapshot found', target=target)
         if not next_timestamp or target < next_timestamp:
             next_rule = rule
             next_timestamp = target
 
+    if next_rule is not None and next_timestamp is not None:
+        _logger.info(
+            events.Snapshot.SCHEDULED,
+            target=next_timestamp,
+            rule=next_rule,
+        )
+
     return next_rule, next_timestamp
 
 
-def deltas_from_gce_pd(volume, api, annotation_key) -> Optional[str]:
-    """
-    Get the delta string based on a GCE PD volume.
-
-    Parameters
-    ----------
-
-    volume : pykube.objects.PersistentVolume
-        GCE PD Volume.
-    api : pykube.HTTPClient
-        Kubernetes client.
-    annotation_key : str
-        The annotation key to get deltas from..
-
-    Returns
-    -------
-    The delta string
-
-    """
-    deltas_str = volume.annotations.get(annotation_key)
-
-    _log = _logger.new(
-        annotation_key=annotation_key,
-        volume_name=volume.name,
-        volume=volume.obj,
-    )
-
-    if deltas_str is not None and deltas_str:
-        _log.info(
-            'Found delta annotation for volume',
-            deltas_str=deltas_str,
-        )
-        return deltas_str
-
-    _log.debug(
-        'Volume has no deltas annotation',
-        deltas_str=deltas_str
-    )
-
-    # If volume is not annotated, attempt ot read deltas from
-    # PersistentVolumeClaim referenced in volume.claimRef
-
-    claim_ref = volume.obj['spec'].get('claimRef')
-    _log = _log.bind(claim_ref=claim_ref)
-
-    if claim_ref is None:
-        _log.debug(
-            'Volume has no claimRef',
-        )
-        return
-
-    volume_claim = (
-        pykube.objects.PersistentVolumeClaim.objects(api)
-        .filter(namespace=claim_ref['namespace'])
-        .get_or_none(name=claim_ref['name'])
-    )
-    _log = _log.bind(
-        volume_claim_name=volume_claim.name,
-        volume_claim=volume_claim.obj,
-    )
-
-    if volume_claim is None:
-        _log.debug(
-            'Volume claim does not exist',
-        )
-        return
-
-    deltas_str = volume_claim.annotations.get(annotation_key)
-
-    if deltas_str is not None and deltas_str:
-        _log.debug(
-            'Found deltas for volume claim',
-            deltas_str=deltas_str,
-        )
-        return deltas_str
-
-    _log.debug(
-        'Volume claim has no deltas annotation',
-        deltas_str=deltas_str,
-    )
-    return
-
-
-def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
+def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False) \
+        -> Optional[Rule]:
     """Given a persistent volume object, create a backup role
     object. Can return None if this volume is not configured for
     backups, or is not suitable.
@@ -195,40 +126,59 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
     for the snapshot.
     """
     _log = _logger.new(
-        volume_name=volume.name,
         volume=volume.obj,
+        annotation_key=deltas_annotation_key,
     )
 
-    provider = volume.annotations.get('pv.kubernetes.io/provisioned-by')
-    _log = _log.bind(provider=provider)
-    if provider != 'kubernetes.io/gce-pd':
-        _log.debug('Volume not a GCE persistent disk', volume=volume)
-        return
+    # Verify the provider
 
-    deltas_unparsed = deltas_from_gce_pd(volume, api, deltas_annotation_key)
-    _log = _log.bind(deltas_str=deltas_unparsed)
-
-    if deltas_unparsed is None:
-        _log.info(
-            'rule.from-pv.deltas-missing',
-            key_hint='volume.metadata.name')
-        return
-
-    try:
-        _log.debug('Parsing deltas', unparsed_deltas=deltas_unparsed)
-        deltas = parse_deltas(deltas_unparsed)
-
-        if not deltas:
-            raise ConfigError(
-                'parse_deltas did not raise, but returned invalid deltas: '
-                '{!r}'.format(deltas)
-            )
-    except ConfigError as e:
-        _log.exception(
-            'rule.from-pv.deltas-invalid',
-            error=e,
+    provisioner = volume.annotations.get('pv.kubernetes.io/provisioned-by')
+    _log = _log.bind(provider=provisioner)
+    if provisioner != 'kubernetes.io/gce-pd':
+        raise UnsupportedVolume(
+            'Unsupported provisioner',
+            provisioner=provisioner
         )
-        return
+
+    def get_deltas(annotations: Dict) -> Optional[List[timedelta]]:
+        """
+        Helper annotation-deltas-getter
+
+        Parameters
+        ----------
+        annotations
+
+        Returns
+        -------
+
+        """
+        try:
+            deltas_str = annotations[deltas_annotation_key]
+        except KeyError as exc:
+            raise AnnotationNotFound(
+                'No such annotation key',
+                key=deltas_annotation_key
+            ) from exc
+
+        if not deltas_str:
+            raise AnnotationError('Invalid delta string', deltas_str=deltas_str)
+
+        try:
+            deltas = parse_deltas(deltas_str)
+        except ConfigError as exc:
+            raise AnnotationError(
+                'Invalid delta string',
+                deltas_str=deltas_str
+            ) from exc
+
+        if deltas is None or not deltas:
+            raise AnnotationError(
+                'parse_deltas returned invalid deltas',
+                deltas_str=deltas_str,
+                deltas=deltas,
+            )
+
+        return deltas
 
     gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
 
@@ -243,32 +193,70 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
     # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
     gce_disk_zone = volume.labels.get('failure-domain.beta.kubernetes.io/zone')
 
-    claim_name = None
-    if use_claim_name and volume.obj['spec'].get('claimRef'):
-        if volume.annotations.get('kubernetes.io/createdby') == 'gce-pd-dynamic-provisioner':
-            ref = volume.obj['spec'].get('claimRef')
-            claim_name = f"{ref['namespace']}--{ref['name']}"
-
-    rule = Rule(
+    rule_kwargs = dict(
         name=volume.name,
         namespace=volume.namespace,
-        deltas=deltas,
-        deltas_unparsed=deltas_unparsed,
         gce_disk=gce_disk,
         gce_disk_zone=gce_disk_zone,
-        claim_name=claim_name,
     )
 
-    _log.info('rule.from-pv', key_hint='volume.metadata.name', rule=rule.to_dict())
+    claim_ref = volume.obj['spec'].get('claimRef')
+    _log = _log.bind(claim_ref=claim_ref)
 
-    return rule
+    volume_claim = (
+        pykube.objects.PersistentVolumeClaim.objects(api)
+        .filter(namespace=claim_ref['namespace'])
+        .get_or_none(name=claim_ref['name'])
+    )  # type: Optional[pykube.objects.PersistentVolumeClaim]
+
+    deltas = None
+
+    try:
+        deltas = get_deltas(volume.annotations)
+        return Rule(
+            deltas=deltas,
+            claim_name=None,
+            **rule_kwargs,
+        )
+    except AnnotationNotFound as exc:
+        if claim_ref is None:
+            raise AnnotationNotFound(
+                'No volume claim found'
+            ) from exc
+
+    if volume_claim is None:
+        raise AnnotationError(
+            'Could not find the PersistentVolumeClaim from claim_ref',
+            claim_ref=claim_ref,
+        )
+
+    try:
+        deltas = get_deltas(volume_claim.annotations)
+    except AnnotationNotFound as exc:
+        raise AnnotationNotFound(
+            'No deltas found via volume claim'
+        ) from exc
+
+    # If volume is not annotated, attempt ot read deltas from
+    # PersistentVolumeClaim referenced in volume.claimRef
+
+    claim_name = None
+    if use_claim_name:
+        if volume.annotations.get('kubernetes.io/createdby') == 'gce-pd-dynamic-provisioner':
+            claim_name = f"{claim_ref['namespace']}--{claim_ref['name']}"
+
+    return Rule(
+        deltas=deltas,
+        claim_name=claim_name,
+        **rule_kwargs,
+    )
 
 
 def sync_get_rules(ctx):
     rules = {}
     api = ctx.make_kubeclient()
 
-    _logger.debug('Observe persistent volume stream')
+    _logger.debug('volume-events.watch')
     stream = pykube.objects.PersistentVolume.objects(api).watch().object_stream()
 
     for event in stream:
@@ -279,56 +267,65 @@ def sync_get_rules(ctx):
             volume=event.object.obj,
         )
 
-        _log.info('volume-event.received')
+        _log.debug('volume-event.received')
 
         if event.type == 'ADDED' or event.type == 'MODIFIED':
-            rule = rule_from_pv(
-                event.object,
-                api,
-                ctx.config.get('deltas_annotation_key'),
-                use_claim_name=ctx.config.get('use_claim_name'))
-
-            _log.info('rule.from-volume')
+            rule = None
+            try:
+                rule = rule_from_pv(
+                    event.object,
+                    api,
+                    ctx.config.get('deltas_annotation_key'),
+                    use_claim_name=ctx.config.get('use_claim_name'))
+            except AnnotationNotFound as exc:
+                _log.info(
+                    events.Annotation.NOT_FOUND,
+                    exc_info=exc,
+                )
+            except AnnotationError:
+                _log.exception(events.Annotation.ERROR)
 
             if rule:
                 _log.bind(
-                    rule=rule.to_dict()
+                    rule=rule
                 )
                 if event.type == 'ADDED' or volume_name not in rules:
-                    _log.info(
-                        'rule.add',
-                        deltas_str=rule.deltas_unparsed
-                    )
+                    _log.info(events.Rule.ADDED)
                 else:
-                    _log.info('rule.update')
+                    _log.info(events.Rule.UPDATED)
                 rules[volume_name] = rule
             else:
                 if volume_name in rules:
-                    _log.info('rule.delete.missing-deltas')
-                rules.pop(volume_name, False)
+                    _log.info(events.Rule.REMOVED)
+                    rules.pop(volume_name, False)
         elif event.type == 'DELETED':
-            _log.info('rule.delete.volume-removed')
+            _log.info(events.Rule.REMOVED)
             rules.pop(volume_name, False)
         else:
             _log.warning('Unhandled event')
 
         yield list(rules.values())
 
+    _logger.debug('sync-get-rules.done')
+
 
 async def get_rules(ctx):
-
     channel = Channel()
-    _log = _logger.new(channel=channel)
+    loop = asyncio.get_event_loop()
+    _log = _logger.new()
 
-    _log.info('rules.getting')
+    _log.debug('get-rules.start')
 
     def worker():
+        # sys.settrace(TracePrinter())
         try:
             _log.debug('Iterating in thread')
             for value in sync_get_rules(ctx):
-                channel.put(value)
+                asyncio.ensure_future(channel.put(value), loop=loop)
+        except:
+            _log.exception('rules.error')
         finally:
-            _log.debug('Closing channel')
+            _log.warning('Closing channel')
             channel.close()
 
     thread = threading.Thread(
@@ -336,27 +333,25 @@ async def get_rules(ctx):
         name='get_rules',
         daemon=True
     )
-    _log = _log.bind(thread=thread)
 
-    _log.debug('Starting iterator thread')
+    _log.debug('get-rules.thread.start')
     thread.start()
 
-    try:
-        async for item in channel:
-            _log.debug('Waiting for new item')
-            yield ctx.config.get('rules') + item
+    async for item in channel:
+        rules = ctx.config.get('rules') + item
+        _log.debug('get-rules.rules.updated', rules=rules)
+        yield rules
 
-    except asyncio.CancelledError:
-        _log.exception('Cancelled worker')
-    except Exception:
-        _log.exception('Unhandled exception while iterating')
-    finally:
-        _log.debug('Iterator exiting')
+    _log.debug('get-rules.done')
 
 
-async def load_snapshots(ctx):
-    r = await exec(ctx.gcloud.snapshots().list(project=ctx.config['gcloud_project']).execute)
-    return r.get('items', [])
+async def load_snapshots(ctx) -> Dict:
+    resp = await run_in_executor(
+        ctx.gcloud.snapshots()
+        .list(project=ctx.config['gcloud_project'])
+        .execute
+    )
+    return resp.get('items', [])
 
 
 async def get_snapshots(ctx, reload_trigger):
@@ -379,26 +374,35 @@ async def watch_schedule(ctx, trigger):
     from Google Cloud. If either of them change, a new backup
     is scheduled.
     """
+    _log = _logger.new()
 
     rulesgen = get_rules(ctx)
     snapgen = get_snapshots(ctx, trigger)
+
+    _log.debug('watch_schedule.start')
+
     combined = combine_latest(
         rules=rulesgen,
         snapshots=snapgen,
-        defaults={'snapshots': None, 'rules': None})
+        defaults={'snapshots': None, 'rules': None}
+    )
 
-    try:
-        async for item in combined:
-            rules = item.get('rules')
-            snapshots = item.get('snapshots')
+    async for item in combined:
+        rules = item.get('rules')
+        snapshots = item.get('snapshots')
+        # _log = _log.bind(
+        #     rules=rules,
+        #     snapshots=snapshots,
+        # )
 
-            # Never schedule before we have data from both rules and snapshots
-            if rules is None or snapshots is None:
-                continue
+        # Never schedule before we have data from both rules and snapshots
+        if rules is None or snapshots is None:
+            _log.debug(
+                'watch_schedule.wait-for-both',
+            )
+            continue
 
-            yield determine_next_snapshot(snapshots, rules)
-    except asyncio.CancelledError:
-        _logger.exception('Caught CancelledError while watching schedule')
+        yield determine_next_snapshot(snapshots, rules)
 
 
 async def make_backup(ctx, rule):
@@ -416,23 +420,23 @@ async def make_backup(ctx, rule):
 
     _log = _logger.new(
         snapshot_name=snapshot_name,
-        rule=rule.to_dict()
+        rule=rule
     )
 
     try:
-        _log.info('snapshot.start')
-        result = await exec(ctx.gcloud.disks().createSnapshot(
+        _log.info(events.Snapshot.START, key_hints=['rule.name', 'snapshot_name'])
+        result = await run_in_executor(ctx.gcloud.disks().createSnapshot(
             disk=rule.gce_disk,
             project=ctx.config['gcloud_project'],
             zone=rule.gce_disk_zone,
             body={"name": snapshot_name}).execute)
     except Exception as exc:
-        _log.exception('snapshot.start.error')
+        _log.exception(events.Snapshot.ERROR)
         raise errors.SnapshotCreateError('Call to API raised an error') from exc
 
     _log = _log.bind(create_snapshot=result)
 
-    _log.debug('snapshot.started')
+    _log.debug('snapshot.started', key_hints=['create_snapshot.status'])
 
     # Immediately after creating the snapshot, it sometimes seems to
     # take some seconds before it can be queried.
@@ -442,16 +446,20 @@ async def make_backup(ctx, rule):
     while result['status'] in ('PENDING', 'UPLOADING', 'CREATING'):
         await asyncio.sleep(2)
         _log.debug('snapshot.status.poll')
-        result = await exec(ctx.gcloud.snapshots().get(
+        result = await run_in_executor(ctx.gcloud.snapshots().get(
             snapshot=snapshot_name,
             project=ctx.config['gcloud_project']).execute)
-        _log.debug('snapshot.status.polled', result)
+        _log.debug('snapshot.status.polled', result=result)
 
     if not result['status'] == 'READY':
-        _log.error('snapshot.error', result=result)
+        _log.error(events.Snapshot.ERROR, result=result)
         return
 
-    _log.info('snapshot.created', last_result=result)
+    _log.info(
+        events.Snapshot.CREATED,
+        last_result=result,
+        key_hints=['snapshot_name', 'rule.name'],
+    )
 
     await expire_snapshots(ctx, rule)
 
@@ -461,19 +469,17 @@ async def expire_snapshots(ctx, rule: Rule):
     Expire existing snapshots for the rule.
     """
     _log = _logger.new(
-        rule=rule.to_dict(),
+        rule=rule,
     )
-    _log.info('Expire existing snapshots')
+    _log.debug('Expiring existing snapshots')
 
     snapshots = await load_snapshots(ctx)
     snapshots = filter_snapshots_by_rule(snapshots, rule)
     snapshots = {s['name']: pendulum.parse(s['creationTimestamp']) for s in snapshots}
 
     to_keep = expire(snapshots, rule.deltas)
-    _log.info('ex',
-        len(snapshots), len(to_keep))
     for snapshot_name in snapshots:
-        _log = _log.bind(
+        _log = _log.new(
             snapshot_name=snapshot_name,
         )
         if snapshot_name in to_keep:
@@ -481,11 +487,15 @@ async def expire_snapshots(ctx, rule: Rule):
             continue
 
         if snapshot_name not in to_keep:
-            _log.info('snapshot.expire')
-            result = await exec(ctx.gcloud.snapshots().delete(
+            _log.debug('snapshot.expiring')
+            result = await run_in_executor(ctx.gcloud.snapshots().delete(
                 snapshot=snapshot_name,
                 project=ctx.config['gcloud_project']).execute)
-            _log.info('snapshot.expired', result=result)
+            _log.info(
+                events.Snapshot.EXPIRED,
+                key_hint='snapshot_name',
+                result=result
+            )
 
 
 async def scheduler(ctx, scheduling_chan, snapshot_reload_trigger):
@@ -498,11 +508,11 @@ async def scheduler(ctx, scheduling_chan, snapshot_reload_trigger):
     doesn't plan multiple backups in advance. Only ever a single
     next backup is scheduled.
     """
-
-    _logger.info('Started scheduler task')
+    _log = _logger.new()
+    _log.debug('scheduler.start')
 
     async for schedule in watch_schedule(ctx, snapshot_reload_trigger):
-        _logger.debug('scheduler.updated', schedule=schedule)
+        _log.debug('scheduler.schedule', schedule=schedule)
         await scheduling_chan.put(schedule)
 
 
@@ -510,7 +520,7 @@ async def backuper(ctx, scheduling_chan, snapshot_reload_trigger):
     """Will take tasks from the given queue, then execute the backup.
     """
     _log = _logger.new()
-    _log.info('backuper.start')
+    _log.debug('backuper.start')
 
     current_target_time = current_target_rule = None
     while True:
@@ -521,11 +531,11 @@ async def backuper(ctx, scheduling_chan, snapshot_reload_trigger):
 
             # Log a message
             if not current_target_time:
-                _logger.info('backuper.no-target')
+                _log.debug('backuper.no-target')
             else:
-                _logger.info(
+                _log.debug(
                     'backuper.next-backup',
-                    rule=current_target_rule.to_dict(),
+                    rule=current_target_rule,
                     target_time=current_target_time,
                     diff=current_target_time.diff(),
                 )
@@ -624,7 +634,7 @@ def read_volume_config():
             gce_disk_zone=zone,
         )
 
-        _log.info('rule.from-env', rule=rule.to_dict())
+        _log.info(events.Rule.ADDED_FROM_CONFIG, rule=rule)
 
         return rule
 

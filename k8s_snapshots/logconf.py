@@ -1,12 +1,70 @@
+import traceback
 from collections import OrderedDict
 from json import JSONEncoder
 
+import pendulum
+from typing import Optional, List, Any, Dict, Iterable
+
 import logbook
 import structlog
-import sys
 
 from datetime import timedelta
 from structlog._frames import _find_first_app_frame_and_name
+
+from k8s_snapshots.errors import StructuredError
+
+
+class ProcessStructuredErrors:
+    def __init__(self):
+        pass
+
+    def _exc_chain(self, start_exc: Exception) -> Iterable[Exception]:
+        chain = []  # reverse chronological order
+        exc = start_exc
+
+        while exc is not None:
+            chain.append(exc)
+            exc = exc.__cause__
+
+        return reversed(chain)
+
+    def _serializable_exc(self, exc_: Exception) -> List[Dict]:
+        def serialize_exc(exc: Exception) -> Dict:
+            if isinstance(exc, StructuredError):
+                return exc.to_dict()
+            else:
+                exc_type = exc.__class__
+                exc_tb = exc.__traceback__
+                return {
+                    'type': exc_type.__qualname__,
+                    'message': str(exc),
+                    'readable': traceback.format_exception(
+                        exc_type,
+                        exc,
+                        exc_tb,
+                        chain=False
+                    )
+                }
+
+        return [serialize_exc(exc) for exc in self._exc_chain(exc_)]
+
+    def __call__(self, logger, method_name, event_dict):
+        exc_info = event_dict.pop('exc_info', None)
+
+        if exc_info is None:
+            return event_dict
+
+        exc_type, exc, exc_tb = structlog.processors._figure_out_exc_info(
+            exc_info)
+
+        if not isinstance(exc, StructuredError):
+            event_dict['exc_info'] = exc_info
+            return event_dict
+
+        structured_error = self._serializable_exc(exc)
+        event_dict['structured_error'] = structured_error
+
+        return event_dict
 
 
 def configure_logging(config):
@@ -36,22 +94,8 @@ def configure_logging(config):
         ``hint`` : ``Optional[str]``
             will be formatted using ``.format(**event_dict)``.
         """
-        def from_key_hint(ed):
-            key_hint = ed.get('key_hint')
-            if key_hint is None:
-                return
-
-            value = ed
-
-            for key in key_hint.split('.'):
-                if value is None:
-                    break
-                value = value.get(key)
-
-            return f'{key_hint}={value!r}'
-
         def from_hint(ed):
-            hint = event_dict.get('hint')
+            hint = event_dict.pop('hint', None)
             if hint is None:
                 return
 
@@ -60,10 +104,40 @@ def configure_logging(config):
             except Exception as exc:
                 return f'! error formatting message: {exc!r}'
 
+        def path_value(dict_: Dict[str, Any], key_path: str) -> Optional[Any]:
+            value = dict_
+
+            for key in key_path.split('.'):
+                if value is None:
+                    return
+                value = value.get(key)
+
+            return value
+
+        def from_key_hint(ed) -> Optional[str]:
+            key_hint = ed.pop('key_hint', None)
+            if key_hint is None:
+                return
+
+            value = path_value(ed, key_hint)
+
+            return f'{key_hint}={value!r}'
+
+        def from_key_hints(ed) -> List[str]:
+            key_hints = ed.pop('key_hints', None)
+            if key_hints is None:
+                return []
+
+            return [
+                f'{key_hint}={path_value(ed, key_hint)}'
+                for key_hint in key_hints
+            ]
+
         hints = [
             from_hint(event_dict),
             from_key_hint(event_dict)
         ]
+        hints += from_key_hints(event_dict)
 
         if all(hint is None for hint in hints):
             return event_dict
@@ -105,11 +179,25 @@ def configure_logging(config):
             return event_dict
         return processor
 
-    key_order = ['event', 'level', 'message']
+    def event_enum_to_str(logger, method_name, event_dict):
+        from k8s_snapshots import events
+        event = event_dict.get('event')
+        if event is None:
+            return event_dict
+
+        if isinstance(event, events.EventEnum):
+            event_dict['snapshot_event'] = event
+            event_dict['event'] = event.value
+
+        return event_dict
+
+    key_order = ['message', 'event', 'level']
 
     if config['structlog_dev']:
         structlog.configure(
             processors=[
+                event_enum_to_str,
+                ProcessStructuredErrors(),
                 structlog.stdlib.add_logger_name,
                 structlog.stdlib.add_log_level,
                 structlog.stdlib.PositionalArgumentsFormatter(),
@@ -131,7 +219,9 @@ def configure_logging(config):
         indent = config['structlog_json_indent'] or None
         structlog.configure(
             processors=[
+                event_enum_to_str,
                 add_severity,
+                ProcessStructuredErrors(),
                 structlog.stdlib.add_logger_name,
                 structlog.processors.TimeStamper(fmt='ISO'),
                 structlog.processors.StackInfoRenderer(),
@@ -141,7 +231,7 @@ def configure_logging(config):
                 order_keys(key_order),
                 structlog.processors.JSONRenderer(
                     indent=indent,
-                    cls=TimeDeltaEncoder,
+                    cls=SnapshotsJSONEncoder,
                 )
             ],
             context_class=OrderedDict,
@@ -151,9 +241,16 @@ def configure_logging(config):
         )
 
 
-class TimeDeltaEncoder(JSONEncoder):
+class SnapshotsJSONEncoder(JSONEncoder):
     def default(self, o):
+        from k8s_snapshots.core import Rule
         if isinstance(o, timedelta):
             return str(timedelta)
 
-        return super(TimeDeltaEncoder, self).default(o)
+        if isinstance(o, pendulum.Pendulum):
+            return o.isoformat()
+
+        if isinstance(o, Rule):
+            return o.to_dict()
+
+        return super(SnapshotsJSONEncoder, self).default(o)
