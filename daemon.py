@@ -6,8 +6,11 @@ backup expiration logic is already in tarsnapper and well tested.
 import os
 import sys
 import json
+import threading
 from datetime import datetime, timedelta
 import asyncio
+
+import attr
 import confcollect
 from aiochannel import Channel, ChannelEmpty
 from googleapiclient import discovery
@@ -17,7 +20,7 @@ from tarsnapper.expire import expire
 import pykube
 import pendulum
 import logbook
-from asyncutils import combine, combine_latest, iterate_in_executor, exec
+from asyncutils import combine_latest, exec
 
 
 # TODO: prevent a backup loop: A failsafe mechanism to make sure we
@@ -104,17 +107,18 @@ class Context:
         return compute
 
 
+@attr.s(init=False)
 class Rule:
     """A rule describes how and when to make backups.
     """
 
-    name = None
-    namespace = None
-    deltas = None
-    deltas_unparsed = None
-    gce_disk = None
-    gce_disk_zone = None
-    claim_name = None
+    name = attr.ib()
+    namespace = attr.ib()
+    deltas = attr.ib()
+    deltas_unparsed = attr.ib()
+    gce_disk = attr.ib()
+    gce_disk_zone = attr.ib()
+    claim_name = attr.ib()
 
     @property
     def pretty_name(self):
@@ -209,6 +213,10 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
             volume.name, e)
         return
 
+    if deltas is None:
+        logger.error('Deltas defined by volume {} are None', volume.name)
+        return
+
     rule = Rule()
     rule.name = volume.name
     rule.namespace = volume.namespace
@@ -270,7 +278,25 @@ def sync_get_rules(ctx):
 
 
 async def get_rules(ctx):
-    async for item in iterate_in_executor(sync_get_rules, ctx):
+    channel = Channel()
+    loop = asyncio.get_event_loop()
+
+    def worker():
+        try:
+            for value in sync_get_rules(ctx):
+                asyncio.ensure_future(channel.put(value), loop=loop)
+        finally:
+            channel.close()
+
+    thread = threading.Thread(
+        target=worker,
+        name='get_rules',
+        daemon=True
+    )
+    thread.start()
+
+    async for item in channel:
+        logger.debug('item={}', item)
         yield ctx.config.get('rules') + item
 
 
