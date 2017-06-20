@@ -52,25 +52,3 @@ async def combine_latest(defaults=None, **generators):
         current.update(value)
         yield current
 
-
-async def iterate_in_executor(sync_iter, *args):
-    """run_in_executor returns a future. But what if the function
-    we call is supposed to return values iteratively?
-    """
-    loop = asyncio.get_event_loop()
-    channel = Channel()
-    def forward_iter(*a):
-        try:
-            # TODO: We are looking for a solution to stop this
-            # if the channel is closed. Should this thread use it's
-            # own event loop where we can use await?
-            for value in sync_iter(*a):
-                asyncio.ensure_future(channel.put(value), loop=loop)
-        finally:
-            channel.close()
-    result = asyncio.get_event_loop().run_in_executor(None, forward_iter, *args)
-    async for item in channel:
-        yield item
-
-    # Any exceptions would be retrieved here
-    await result
