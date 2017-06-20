@@ -209,6 +209,10 @@ def rule_from_pv(volume, api, deltas_annotation_key, use_claim_name=False):
             volume.name, e)
         return
 
+    if deltas is None:
+        logger.error('Deltas defined by volume {} are None', volume.name)
+        return
+
     rule = Rule()
     rule.name = volume.name
     rule.namespace = volume.namespace
