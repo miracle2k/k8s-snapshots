@@ -8,6 +8,8 @@ import sys
 import json
 from datetime import datetime, timedelta
 import asyncio
+
+import attr
 import confcollect
 from aiochannel import Channel, ChannelEmpty
 from googleapiclient import discovery
@@ -104,17 +106,18 @@ class Context:
         return compute
 
 
+@attr.s(init=False)
 class Rule:
     """A rule describes how and when to make backups.
     """
 
-    name = None
-    namespace = None
-    deltas = None
-    deltas_unparsed = None
-    gce_disk = None
-    gce_disk_zone = None
-    claim_name = None
+    name = attr.ib()
+    namespace = attr.ib()
+    deltas = attr.ib()
+    deltas_unparsed = attr.ib()
+    gce_disk = attr.ib()
+    gce_disk_zone = attr.ib()
+    claim_name = attr.ib()
 
     @property
     def pretty_name(self):
