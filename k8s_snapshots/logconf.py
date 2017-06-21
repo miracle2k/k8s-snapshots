@@ -1,15 +1,15 @@
 import traceback
+
 from collections import OrderedDict
 from json import JSONEncoder
-
-import pendulum
+from datetime import timedelta
 from typing import Optional, List, Any, Dict, Iterable
 
+import pendulum
 import logbook
 import structlog
+import isodate
 
-from datetime import timedelta
-from structlog._frames import _find_first_app_frame_and_name
 
 from k8s_snapshots.errors import StructuredError
 
@@ -157,6 +157,8 @@ def configure_logging(config):
     handler.push_application()
 
     def logger_factory(name=None):
+        from structlog._frames import _find_first_app_frame_and_name
+
         if name is None:
             _, name = _find_first_app_frame_and_name(
                 additional_ignores=[
@@ -261,11 +263,21 @@ def configure_logging(config):
 
 
 class SnapshotsJSONEncoder(JSONEncoder):
-    def default(self, o):
-        if isinstance(o, timedelta):
-            return str(timedelta)
+    def __init__(self, *args, **kwargs):
+        # We need to intercept the default=_json_fallback_encoder that
+        # structlog.processors.JSONRenderer passes to json.dumps in order to
+        # have our own .default()
+        self._default_handler = kwargs.pop('default', None)
+        super(SnapshotsJSONEncoder, self).__init__(*args, **kwargs)
 
-        if isinstance(o, pendulum.Pendulum):
-            return o.isoformat()
+    def default(self, obj):
+        if isinstance(obj, timedelta):
+            return isodate.duration_isoformat(obj)
 
-        return super(SnapshotsJSONEncoder, self).default(o)
+        if isinstance(obj, pendulum.Pendulum):
+            return obj.isoformat()
+
+        if self._default_handler is not None:
+            return self._default_handler(obj)
+        else:
+            return super(SnapshotsJSONEncoder, self).default(obj)

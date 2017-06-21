@@ -7,3 +7,4 @@ structlog==17.2.0
 attrs==17.2.0
 pendulum==0.8.0
 confcollect==0.2.3
+isodate==0.5.4
