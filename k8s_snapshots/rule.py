@@ -9,7 +9,7 @@ class Rule:
     A rule describes how and when to make backups.
     """
 
-    volume_name = attr.ib()
+    name = attr.ib()
     namespace = attr.ib()
 
     deltas = attr.ib()
