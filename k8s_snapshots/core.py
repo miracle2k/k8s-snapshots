@@ -347,7 +347,7 @@ async def get_rules(ctx):
 
 async def load_snapshots(ctx) -> Dict:
     resp = await run_in_executor(
-        ctx.gcloud.snapshots()
+        ctx.make_gclient().snapshots()
         .list(project=ctx.config['gcloud_project'])
         .execute
     )
@@ -423,13 +423,18 @@ async def make_backup(ctx, rule):
         rule=rule
     )
 
+    gcloud = ctx.make_gclient()
+
     try:
         _log.info(events.Snapshot.START, key_hints=['rule.name', 'snapshot_name'])
-        result = await run_in_executor(ctx.gcloud.disks().createSnapshot(
-            disk=rule.gce_disk,
-            project=ctx.config['gcloud_project'],
-            zone=rule.gce_disk_zone,
-            body={"name": snapshot_name}).execute)
+        result = await run_in_executor(
+            gcloud.disks().createSnapshot(
+                disk=rule.gce_disk,
+                project=ctx.config['gcloud_project'],
+                zone=rule.gce_disk_zone,
+                body={"name": snapshot_name}
+            ).execute
+        )
     except Exception as exc:
         _log.exception(events.Snapshot.ERROR)
         raise errors.SnapshotCreateError('Call to API raised an error') from exc
@@ -446,9 +451,12 @@ async def make_backup(ctx, rule):
     while result['status'] in ('PENDING', 'UPLOADING', 'CREATING'):
         await asyncio.sleep(2)
         _log.debug('snapshot.status.poll')
-        result = await run_in_executor(ctx.gcloud.snapshots().get(
-            snapshot=snapshot_name,
-            project=ctx.config['gcloud_project']).execute)
+        result = await run_in_executor(
+            gcloud.snapshots().get(
+                snapshot=snapshot_name,
+                project=ctx.config['gcloud_project']
+            ).execute
+        )
         _log.debug('snapshot.status.polled', result=result)
 
     if not result['status'] == 'READY':
@@ -488,9 +496,12 @@ async def expire_snapshots(ctx, rule: Rule):
 
         if snapshot_name not in to_keep:
             _log.debug('snapshot.expiring')
-            result = await run_in_executor(ctx.gcloud.snapshots().delete(
-                snapshot=snapshot_name,
-                project=ctx.config['gcloud_project']).execute)
+            result = await run_in_executor(
+                ctx.make_gclient().snapshots().delete(
+                    snapshot=snapshot_name,
+                    project=ctx.config['gcloud_project']
+                ).execute
+            )
             _log.info(
                 events.Snapshot.EXPIRED,
                 key_hint='snapshot_name',

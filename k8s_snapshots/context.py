@@ -62,5 +62,9 @@ class Context:
         if not credentials:
             raise RuntimeError("Auth for Google Cloud was not configured")
 
-        compute = discovery.build('compute', 'v1', credentials=credentials)
+        compute = discovery.build(
+            'compute',
+            'v1',
+            credentials=credentials,
+        )
         return compute
