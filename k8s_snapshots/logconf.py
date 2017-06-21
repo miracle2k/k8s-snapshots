@@ -67,6 +67,87 @@ class ProcessStructuredErrors:
         return event_dict
 
 
+def add_message(logger, method_name, event_dict):
+    """
+    Creates a ``message`` value based on the ``hint`` and ``key_hint`` keys.
+
+    ``key_hint`` : ``Optional[str]``
+        a '.'-separated path of dictionary keys.
+
+    ``hint`` : ``Optional[str]``
+        will be formatted using ``.format(**event_dict)``.
+    """
+    def from_hint(ed):
+        hint = event_dict.pop('hint', None)
+        if hint is None:
+            return
+
+        try:
+            return hint.format(**event_dict)
+        except Exception as exc:
+            return f'! error formatting message: {exc!r}'
+
+    def path_value(dict_: Dict[str, Any], key_path: str) -> Optional[Any]:
+        value = dict_
+
+        for key in key_path.split('.'):
+            if value is None:
+                return
+            value = value.get(key)
+
+        return value
+
+    def from_key_hint(ed) -> Optional[str]:
+        key_hint = ed.pop('key_hint', None)
+        if key_hint is None:
+            return
+
+        value = path_value(ed, key_hint)
+
+        return f'{key_hint}={value!r}'
+
+    def from_key_hints(ed) -> List[str]:
+        key_hints = ed.pop('key_hints', None)
+        if key_hints is None:
+            return []
+
+        return [
+            f'{key_hint}={path_value(ed, key_hint)}'
+            for key_hint in key_hints
+        ]
+
+    hints = [
+        from_hint(event_dict),
+        from_key_hint(event_dict)
+    ]
+    hints += from_key_hints(event_dict)
+
+    if all(hint is None for hint in hints):
+        return event_dict
+
+    prefix = event_dict['event']
+    hint = ', '.join(hint for hint in hints if hint is not None)
+
+    event_dict['message'] = f'{prefix}: {hint}'
+    return event_dict
+
+
+def serialize_rules(logger, method_name, event_dict):
+    """
+    Replace Rule instances with their .to_dict() representation in time for
+    add_message to use attributes of it via key_hints.
+    """
+    from k8s_snapshots.core import Rule
+
+    updates = {}
+    for key, value in event_dict.items():
+        if isinstance(value, Rule):
+            updates[key] = value.to_dict()
+
+    event_dict.update(updates)
+    return event_dict
+
+
 def configure_logging(config):
     level = logbook.lookup_level(config['log_level'])
     handler = logbook.StderrHandler(
@@ -83,70 +164,6 @@ def configure_logging(config):
                 ]
             )
         return logbook.Logger(name, level=level)
-
-    def add_message(logger, method_name, event_dict):
-        """
-        Creates a ``message`` value based on the ``hint`` and ``key_hint`` keys.
-
-        ``key_hint`` : ``Optional[str]``
-            a '.'-separated path of dictionary keys.
-
-        ``hint`` : ``Optional[str]``
-            will be formatted using ``.format(**event_dict)``.
-        """
-        def from_hint(ed):
-            hint = event_dict.pop('hint', None)
-            if hint is None:
-                return
-
-            try:
-                return hint.format(**event_dict)
-            except Exception as exc:
-                return f'! error formatting message: {exc!r}'
-
-        def path_value(dict_: Dict[str, Any], key_path: str) -> Optional[Any]:
-            value = dict_
-
-            for key in key_path.split('.'):
-                if value is None:
-                    return
-                value = value.get(key)
-
-            return value
-
-        def from_key_hint(ed) -> Optional[str]:
-            key_hint = ed.pop('key_hint', None)
-            if key_hint is None:
-                return
-
-            value = path_value(ed, key_hint)
-
-            return f'{key_hint}={value!r}'
-
-        def from_key_hints(ed) -> List[str]:
-            key_hints = ed.pop('key_hints', None)
-            if key_hints is None:
-                return []
-
-            return [
-                f'{key_hint}={path_value(ed, key_hint)}'
-                for key_hint in key_hints
-            ]
-
-        hints = [
-            from_hint(event_dict),
-            from_key_hint(event_dict)
-        ]
-        hints += from_key_hints(event_dict)
-
-        if all(hint is None for hint in hints):
-            return event_dict
-
-        prefix = event_dict['event']
-        hint = ', '.join(hint for hint in hints if hint is not None)
-
-        event_dict['message'] = f'{prefix}: {hint}'
-        return event_dict
 
     def add_severity(logger, method_name, event_dict):
         if method_name == 'warn':
@@ -198,6 +215,7 @@ def configure_logging(config):
             processors=[
                 event_enum_to_str,
                 ProcessStructuredErrors(),
+                serialize_rules,
                 structlog.stdlib.add_logger_name,
                 structlog.stdlib.add_log_level,
                 structlog.stdlib.PositionalArgumentsFormatter(),
@@ -222,6 +240,7 @@ def configure_logging(config):
                 event_enum_to_str,
                 add_severity,
                 ProcessStructuredErrors(),
+                serialize_rules,
                 structlog.stdlib.add_logger_name,
                 structlog.processors.TimeStamper(fmt='ISO'),
                 structlog.processors.StackInfoRenderer(),
@@ -243,14 +262,10 @@ def configure_logging(config):
 
 class SnapshotsJSONEncoder(JSONEncoder):
     def default(self, o):
-        from k8s_snapshots.core import Rule
         if isinstance(o, timedelta):
             return str(timedelta)
 
         if isinstance(o, pendulum.Pendulum):
             return o.isoformat()
-
-        if isinstance(o, Rule):
-            return o.to_dict()
 
         return super(SnapshotsJSONEncoder, self).default(o)
