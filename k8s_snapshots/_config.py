@@ -17,7 +17,11 @@ DEFAULT_CONFIG = {
     'gcloud_json_keyfile_string': '',
     'kube_config_file': '',
     'use_claim_name': False,
+    #: The key used when annotating PVs and PVCs with deltas
     'deltas_annotation_key': 'backup.kubernetes.io/deltas',
+    #: The label key on a GCE Snapshot where the Rule for which a snapshot was
+    #: created is stored.
+    'snapshot_label_rule': 'backup.kubernetes.io/rule',
     #: Turns debug mode on, not recommended in production
     'debug': False,
 }

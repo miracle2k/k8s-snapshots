@@ -1,17 +1,12 @@
 import traceback
-
 from collections import OrderedDict
-from json import JSONEncoder
-from datetime import timedelta
 from typing import Optional, List, Any, Dict, Iterable
 
-import pendulum
 import logbook
 import structlog
-import isodate
-
 
 from k8s_snapshots.errors import StructuredError
+from k8s_snapshots.serialize import SnapshotsJSONEncoder
 
 
 class ProcessStructuredErrors:
@@ -137,7 +132,7 @@ def serialize_rules(logger, method_name, event_dict):
     Replace Rule instances with their .to_dict() representation in time for
     add_message to use attributes of it via key_hints.
     """
-    from k8s_snapshots.core import Rule
+    from k8s_snapshots.rule import Rule
 
     updates = {}
     for key, value in event_dict.items():
@@ -262,22 +257,3 @@ def configure_logging(config):
         )
 
 
-class SnapshotsJSONEncoder(JSONEncoder):
-    def __init__(self, *args, **kwargs):
-        # We need to intercept the default=_json_fallback_encoder that
-        # structlog.processors.JSONRenderer passes to json.dumps in order to
-        # have our own .default()
-        self._default_handler = kwargs.pop('default', None)
-        super(SnapshotsJSONEncoder, self).__init__(*args, **kwargs)
-
-    def default(self, obj):
-        if isinstance(obj, timedelta):
-            return isodate.duration_isoformat(obj)
-
-        if isinstance(obj, pendulum.Pendulum):
-            return obj.isoformat()
-
-        if self._default_handler is not None:
-            return self._default_handler(obj)
-        else:
-            return super(SnapshotsJSONEncoder, self).default(obj)

@@ -3,23 +3,20 @@
 backup expiration logic is already in tarsnapper and well tested.
 """
 import asyncio
-import functools
-import re
 import os
+import re
 import threading
 from datetime import timedelta
-from typing import Optional, Dict, Any, List, Iterable
+from typing import Optional, Dict, List, Iterable
 
-import attr
 import pendulum
 import pykube
 import structlog
-
 from aiochannel import Channel, ChannelEmpty
 from tarsnapper.config import parse_deltas, ConfigError
 from tarsnapper.expire import expire
 
-from k8s_snapshots import errors, events
+from k8s_snapshots import errors, events, serialize
 from k8s_snapshots.asyncutils import combine_latest, run_in_executor
 # TODO: prevent a backup loop: A failsafe mechanism to make sure we
 #   don't create more than x snapshots per disk; in case something
@@ -30,33 +27,9 @@ from k8s_snapshots.asyncutils import combine_latest, run_in_executor
 from k8s_snapshots.context import Context
 from k8s_snapshots.errors import AnnotationNotFound, AnnotationError, \
     UnsupportedVolume
+from k8s_snapshots.rule import Rule
 
 _logger = structlog.get_logger()
-
-
-@attr.s(slots=True)
-class Rule:
-    """
-    A rule describes how and when to make backups.
-    """
-
-    name = attr.ib()
-    namespace = attr.ib()
-    deltas = attr.ib()
-    gce_disk = attr.ib()
-    gce_disk_zone = attr.ib()
-    claim_name = attr.ib()
-
-    @property
-    def pretty_name(self):
-        return self.claim_name or self.name
-
-    def to_dict(self) -> Dict[str, Any]:
-        """ Helper, returns attr.asdict(self) """
-        return attr.asdict(self)
-
-    def __str__ (self):
-        return self.name
 
 
 def filter_snapshots_by_rule(snapshots, rule) -> Iterable:
@@ -424,15 +397,22 @@ async def make_backup(ctx, rule):
     )
 
     gcloud = ctx.make_gclient()
+    labels = {
+        ctx.config['snapshot_label_rule']: serialize.dumps(rule.to_dict()),
+    }
 
     try:
         _log.info(events.Snapshot.START, key_hints=['rule.name', 'snapshot_name'])
+
         result = await run_in_executor(
             gcloud.disks().createSnapshot(
                 disk=rule.gce_disk,
                 project=ctx.config['gcloud_project'],
                 zone=rule.gce_disk_zone,
-                body={"name": snapshot_name}
+                body={
+                    'name': snapshot_name,
+                    'labels': labels,
+                }
             ).execute
         )
     except Exception as exc:
