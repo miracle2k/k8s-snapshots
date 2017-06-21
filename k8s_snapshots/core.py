@@ -398,7 +398,7 @@ async def make_backup(ctx, rule):
 
     gcloud = ctx.make_gclient()
     labels = {
-        ctx.config['snapshot_label_rule']: serialize.dumps(rule.to_dict()),
+        ctx.config['snapshot_rule_label']: serialize.dumps(rule.to_dict()),
     }
 
     try:

@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
     'deltas_annotation_key': 'backup.kubernetes.io/deltas',
     #: The label key on a GCE Snapshot where the Rule for which a snapshot was
     #: created is stored.
-    'snapshot_label_rule': 'backup.kubernetes.io/rule',
+    'snapshot_rule_label': 'backup.kubernetes.io/rule',
     #: Turns debug mode on, not recommended in production
     'debug': False,
 }
