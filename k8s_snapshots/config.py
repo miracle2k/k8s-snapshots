@@ -1,6 +1,18 @@
+import os
+from typing import Dict
+
+import confcollect
 import pendulum
 import re
 import structlog
+from tarsnapper.config import ConfigError, parse_deltas
+
+from k8s_snapshots import events
+from k8s_snapshots.errors import ConfigurationError
+from k8s_snapshots.rule import Rule
+
+_logger = structlog.get_logger()
+
 
 DEFAULT_CONFIG = {
     #: Set to True to make logs more human-readable
@@ -44,9 +56,8 @@ GOOGLE_SNAPSHOT_NAME_REGEX = r'^(?:[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?)$'
 GOOGLE_LABEL_REGEX = r'^(?:[-\w]{0,63})$'
 
 
-def validate_config(config):
+def validate_config(config: Dict) -> bool:
     required_keys = {'gcloud_project'}
-    _logger = structlog.get_logger()
 
     is_valid = True
 
@@ -104,3 +115,65 @@ def validate_config(config):
             is_valid = False
 
     return is_valid
+
+
+def from_environ() -> Dict:
+    config = DEFAULT_CONFIG.copy()
+    config.update(confcollect.from_environ(by_defaults=DEFAULT_CONFIG))
+
+    # Read manual volume definitions
+    try:
+        config.update(read_volume_config())
+    except ValueError as exc:
+        _logger.exception('config.error')
+        raise ConfigurationError(
+            'Could not read volume configuration',
+            config=config,
+        ) from exc
+
+    if not validate_config(config):
+        raise ConfigurationError(
+            'Invalid configuration. See log for more details',
+            config=config
+        )
+
+    return config
+
+
+def read_volume_config() -> Dict:
+    """Read the volume configuration from the environment
+    """
+    def read_volume(name):
+        _log = _logger.new(
+            volume_name=name,
+        )
+        env_name = name.replace('-', '_').upper()
+        deltas_str = os.environ.get('VOLUME_{}_DELTAS'.format(env_name))
+        if not deltas_str:
+            raise ConfigError('A volume {} was defined, but {} is not set'.format(name, env_name))
+
+        zone = os.environ.get('VOLUME_{}_ZONE'.format(env_name))
+        if not zone:
+            raise ConfigError('A volume {} was defined, but {} is not set'.format(name, env_name))
+
+        _log = _log.bind(
+            deltas_str=deltas_str,
+            zone=zone,
+        )
+
+        rule = Rule(
+            name=name,
+            namespace='',
+            deltas=parse_deltas(deltas_str),
+            gce_disk=name,
+            gce_disk_zone=zone,
+        )
+
+        _log.info(events.Rule.ADDED_FROM_CONFIG, rule=rule)
+
+        return rule
+
+    volumes = filter(bool, map(lambda s: s.strip(), os.environ.get('VOLUMES', '').split(',')))
+    config = {}
+    config['rules'] = list(filter(bool, map(read_volume, volumes)))
+    return config

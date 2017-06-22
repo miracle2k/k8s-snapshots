@@ -6,7 +6,7 @@ import structlog
 from googleapiclient import discovery
 from oauth2client.service_account import ServiceAccountCredentials
 
-from k8s_snapshots._config import DEFAULT_CONFIG
+from k8s_snapshots.config import DEFAULT_CONFIG
 
 _logger = structlog.get_logger()
 
@@ -14,9 +14,7 @@ _logger = structlog.get_logger()
 class Context:
 
     def __init__(self, config=None):
-        self.config = DEFAULT_CONFIG.copy()
-        if config:
-            self.config.update(config)
+        self.config = config
         self.kube = self.make_kubeclient()
         self.gcloud = self.make_gclient()
 

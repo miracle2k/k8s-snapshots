@@ -3,7 +3,6 @@
 backup expiration logic is already in tarsnapper and well tested.
 """
 import asyncio
-import os
 import re
 import threading
 from datetime import timedelta
@@ -13,7 +12,6 @@ import pendulum
 import pykube
 import structlog
 from aiochannel import Channel, ChannelEmpty
-from tarsnapper.config import parse_deltas, ConfigError
 from tarsnapper.expire import expire
 
 from k8s_snapshots import errors, events
@@ -457,44 +455,3 @@ async def daemon(config, *, loop=None):
             if not pending:
                 _logger.debug('all tasks done')
                 raise
-
-
-def read_volume_config():
-    """Read the volume configuration from the environment
-    """
-    def read_volume(name):
-        _log = _logger.new(
-            volume_name=name,
-        )
-        env_name = name.replace('-', '_').upper()
-        deltas_str = os.environ.get('VOLUME_{}_DELTAS'.format(env_name))
-        if not deltas_str:
-            raise ConfigError('A volume {} was defined, but {} is not set'.format(name, env_name))
-
-        zone = os.environ.get('VOLUME_{}_ZONE'.format(env_name))
-        if not zone:
-            raise ConfigError('A volume {} was defined, but {} is not set'.format(name, env_name))
-
-        _log = _log.bind(
-            deltas_str=deltas_str,
-            zone=zone,
-        )
-
-        rule = Rule(
-            name=name,
-            namespace='',
-            deltas=parse_deltas(deltas_str),
-            deltas_unparsed=deltas_str,
-            gce_disk=name,
-            gce_disk_zone=zone,
-        )
-
-        _log.info(events.Rule.ADDED_FROM_CONFIG, rule=rule)
-
-        return rule
-
-    volumes = filter(bool, map(lambda s: s.strip(), os.environ.get('VOLUMES', '').split(',')))
-    config = {}
-    config['rules'] = list(filter(bool, map(read_volume, volumes)))
-    return config
-

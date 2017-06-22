@@ -2,6 +2,7 @@ import traceback
 from typing import Dict
 
 
+
 class StructuredError(Exception):
     def __init__(self, message=None, **data):
         self.message = message
@@ -26,6 +27,10 @@ class StructuredError(Exception):
                 chain=False
             )
         }
+
+
+class ConfigurationError(StructuredError):
+    pass
 
 
 class UnsupportedVolume(StructuredError):

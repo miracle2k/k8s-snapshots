@@ -6,13 +6,13 @@ import sys
 import confcollect
 import structlog
 
-from k8s_snapshots._config import DEFAULT_CONFIG, validate_config
+import k8s_snapshots.config
 from k8s_snapshots.logconf import configure_logging
+from k8s_snapshots.core import daemon
 
 
 def main():
-    config = DEFAULT_CONFIG.copy()
-    config.update(confcollect.from_environ(by_defaults=DEFAULT_CONFIG))
+    config = k8s_snapshots.config.from_environ()
 
     configure_logging(config)
 
@@ -20,18 +20,7 @@ def main():
         sys.excepthook = debug_excepthook
 
     # Late import to keep module-level get_logger after configure_logging
-    from k8s_snapshots.core import read_volume_config, daemon
     _logger = structlog.get_logger(__name__)
-
-    # Read manual volume definitions
-    try:
-        config.update(read_volume_config())
-    except ValueError as exc:
-        _logger.error('config.read-volume-config.error', error=exc)
-        return 1
-
-    if not validate_config(config):
-        return 1
 
     _logger.bind(
         gcloud_projec=config['gcloud_project'],
