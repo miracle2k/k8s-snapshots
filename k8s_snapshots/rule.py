@@ -3,11 +3,13 @@ from typing import Dict, Any, Optional, List
 
 import attr
 import pykube
+import structlog
 from tarsnapper.config import parse_deltas, ConfigError
 
-from k8s_snapshots.core import _logger
 from k8s_snapshots.errors import UnsupportedVolume, AnnotationNotFound, \
     AnnotationError
+
+_logger = structlog.get_logger(__name__)
 
 
 @attr.s(slots=True)
