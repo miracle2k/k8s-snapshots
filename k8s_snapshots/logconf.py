@@ -107,7 +107,7 @@ def add_message(logger, method_name, event_dict):
             return []
 
         return [
-            f'{key_hint}={path_value(ed, key_hint)}'
+            f'{key_hint}={path_value(ed, key_hint)!r}'
             for key_hint in key_hints
         ]
 
@@ -123,7 +123,13 @@ def add_message(logger, method_name, event_dict):
     prefix = event_dict['event']
     hint = ', '.join(hint for hint in hints if hint is not None)
 
-    event_dict['message'] = f'{prefix}: {hint}'
+    message = event_dict.get('message')
+    if message is not None:
+        message = f'{prefix}: {message}, {hint}'
+    else:
+        message = f'{prefix}: {hint}'
+
+    event_dict['message'] = message
     return event_dict
 
 

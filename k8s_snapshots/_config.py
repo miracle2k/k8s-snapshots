@@ -19,9 +19,9 @@ DEFAULT_CONFIG = {
     'use_claim_name': False,
     #: The key used when annotating PVs and PVCs with deltas
     'deltas_annotation_key': 'backup.kubernetes.io/deltas',
-    #: The label key on a GCE Snapshot where the Rule for which a snapshot was
-    #: created is stored.
-    'snapshot_rule_label': 'backup.kubernetes.io/rule',
+    #: This label will be set on all snapshots created by k8s-snapshots
+    'snapshot_author_label': 'k8s-snapshots',
+    'snapshot_author_label_key': 'created-by',
     #: Turns debug mode on, not recommended in production
     'debug': False,
 }
@@ -30,10 +30,25 @@ DEFAULT_CONFIG = {
 #: Regex provided by the createSnapshot error response.
 GOOGLE_SNAPSHOT_NAME_REGEX = r'^(?:[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?)$'
 
+# Google Label keys and values must conform to the following restrictions:
+# - Keys and values cannot be longer than 63 characters each.
+# - Keys and values can only contain lowercase letters, numeric characters,
+#   underscores, and dashes. International characters are allowed.
+# - Label keys must start with a lowercase letter and international characters
+#   are allowed.
+# - Label keys cannot be empty.
+# See https://cloud.google.com/compute/docs/labeling-resources for more
+
+#: The regex that a label key and value has to match, additionally it has to be
+#: lowercase, this is checked with str().islower()
+GOOGLE_LABEL_REGEX = r'^(?:[-\w]{0,63})$'
+
 
 def validate_config(config):
     required_keys = {'gcloud_project'}
     _logger = structlog.get_logger()
+
+    is_valid = True
 
     missing_required_keys = required_keys - set(config.keys())
 
@@ -42,7 +57,7 @@ def validate_config(config):
             'config.error',
             missing_required_keys=missing_required_keys
         )
-        return False
+        is_valid = False
 
     test_datetime = pendulum.now('utc').format(
         config['snapshot_datetime_format'])
@@ -57,6 +72,35 @@ def validate_config(config):
             test_snapshot_name=test_snapshot_name,
             regex=GOOGLE_SNAPSHOT_NAME_REGEX
         )
-        return False
+        is_valid = False
 
-    return True
+    # Configuration keys that are either a Google
+    glabel_key_keys = {'snapshot_author_label'}
+    glabel_value_keys = {'snapshot_author_label_key'}
+
+    for key in glabel_key_keys | glabel_value_keys:
+        value = config[key]  # type: str
+        re_match = re.match(GOOGLE_LABEL_REGEX, value)
+        is_glabel_key = key in glabel_key_keys
+        is_glabel_valid = (
+            re_match and value.islower() and
+            value[0].isalpha() or not is_glabel_key
+        )
+
+        if not is_glabel_valid:
+            _logger.error(
+                'config.error',
+                message=f'Configuration value is not a valid '
+                        f'Google Label {"Key" if is_glabel_key else "Value"}. '
+                        f'See '
+                        f'https://cloud.google.com/compute/docs/labeling-resources '
+                        f'for more',
+                key_hints=['value', 'regex'],
+                key=key,
+                is_lower=value.islower(),
+                value=config[key],
+                regex=GOOGLE_LABEL_REGEX,
+            )
+            is_valid = False
+
+    return is_valid
