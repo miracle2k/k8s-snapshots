@@ -5,6 +5,7 @@ import pykube
 import structlog
 from googleapiclient import discovery
 from oauth2client.service_account import ServiceAccountCredentials
+from oauth2client.client import GoogleCredentials
 
 from k8s_snapshots.config import DEFAULT_CONFIG
 
@@ -56,6 +57,9 @@ class Context:
             keyfile = json.loads(self.config.get('gcloud_json_keyfile_string'))
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(
                 keyfile, scopes=SCOPES)
+
+        if not credentials:
+            credentials = GoogleCredentials.get_application_default()
 
         if not credentials:
             raise RuntimeError("Auth for Google Cloud was not configured")
