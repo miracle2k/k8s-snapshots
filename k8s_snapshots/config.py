@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
     'structlog_json_indent': 0,
     #: Anything [^a-z0-9-] will be replaced by '-', the timezone will always be
     #: UTC.
-    'snapshot_datetime_format': '%Y-%m-%dt%H-%M-%Sz',
+    'snapshot_datetime_format': '%d%m%y-%H%M%S',
     'log_level': 'INFO',
     'gcloud_project': '',
     'gcloud_json_keyfile_name': '',
