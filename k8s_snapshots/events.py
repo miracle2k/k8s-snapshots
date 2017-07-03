@@ -44,3 +44,11 @@ class Rule(EventEnum):
     ADDED = 'rule.added'
     UPDATED = 'rule.updated'
     REMOVED = 'rule.removed'
+
+
+@enum.unique
+class Ping(EventEnum):
+    """
+    Events related to sending pings.
+    """
+    SENT = 'ping.sent'

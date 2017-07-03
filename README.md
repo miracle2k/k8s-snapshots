@@ -154,6 +154,16 @@ Provide environment variables to configure these.
       The zone for this volume.
     </td>
   </tr>
+  <tr>
+    <td>PING_URL</td>
+    <td>No</td>
+    <td></td>
+    <td>
+      We'll send a GET request to this url whenever a backup completes.
+      This is useful for integrating with monitoring services like
+      Cronitor or Dead Man's Snitch.
+    </td>
+  </tr>
 </table>
 
 

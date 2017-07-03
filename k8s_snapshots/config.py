@@ -29,6 +29,7 @@ DEFAULT_CONFIG = {
     'gcloud_json_keyfile_string': '',
     'kube_config_file': '',
     'use_claim_name': False,
+    'ping_url': '',
     #: The key used when annotating PVs and PVCs with deltas
     'deltas_annotation_key': 'backup.kubernetes.io/deltas',
     #: This label will be set on all snapshots created by k8s-snapshots

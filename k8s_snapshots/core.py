@@ -3,6 +3,7 @@
 backup expiration logic is already in tarsnapper and well tested.
 """
 import asyncio
+import aiohttp
 import re
 import threading
 from datetime import timedelta
@@ -310,6 +311,16 @@ async def make_backup(ctx, rule):
         last_result=result,
         key_hints=['snapshot_name', 'rule.name'],
     )
+
+    ping_url = ctx.config.get('ping_url')
+    if ping_url:
+        with aiohttp.ClientSession() as session:
+            response = await session.request('GET', ping_url)
+            _log.info(
+                events.Ping.SENT,
+                status=response.status,
+                url=ping_url,
+            )
 
     await expire_snapshots(ctx, rule)
 
