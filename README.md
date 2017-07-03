@@ -155,3 +155,16 @@ Provide environment variables to configure these.
     </td>
   </tr>
 </table>
+
+
+Development
+-----------
+
+For local development, you can still connect to an existing Google
+Cloud Project and Kubernetes cluster using the config options
+available. If you are lucky, your local workstation is already setup
+the way you need it. If we can find credentials for Google Cloud
+or Kubernetes, they will be used automatically. If so, the following
+command should work for you:
+
+    $ GCLOUD_PROJECT=handy-hexagon python -m k8s_snapshots
