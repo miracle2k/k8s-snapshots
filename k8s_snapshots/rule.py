@@ -122,6 +122,9 @@ def rule_from_pv(
     # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
     # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
     gce_disk_zone = volume.labels.get('failure-domain.beta.kubernetes.io/zone')
+    if not gce_disk_zone:
+        # Abuse the annotation error class.
+        raise AnnotationError('cannot find the zone of the disk')
 
     rule_kwargs = dict(
         name=volume.name,
