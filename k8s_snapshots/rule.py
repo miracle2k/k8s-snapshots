@@ -133,37 +133,20 @@ def rule_from_pv(
     claim_ref = volume.obj['spec'].get('claimRef')
     _log = _log.bind(claim_ref=claim_ref)
 
-    volume_claim = (
-        pykube.objects.PersistentVolumeClaim.objects(api)
-        .filter(namespace=claim_ref['namespace'])
-        .get_or_none(name=claim_ref['name'])
-    )  # type: Optional[pykube.objects.PersistentVolumeClaim]
-
     try:
         deltas = get_deltas(volume.annotations)
-        return Rule(
-            deltas=deltas,
-            claim_name=None,
-            **rule_kwargs,
-        )
     except AnnotationNotFound as exc:
-        if claim_ref is None:
-            raise AnnotationNotFound(
-                'No volume claim found'
-            ) from exc
+        # See if we can find the annotation in a attached volume claim
+        if not claim_ref:
+            raise
 
-    if volume_claim is None:
-        raise AnnotationError(
-            'Could not find the PersistentVolumeClaim from claim_ref',
-            claim_ref=claim_ref,
-        )
+        volume_claim = (
+            pykube.objects.PersistentVolumeClaim.objects(api)
+            .filter(namespace=claim_ref['namespace'])
+            .get_or_none(name=claim_ref['name'])
+        )  # type: Optional[pykube.objects.PersistentVolumeClaim]
 
-    try:
         deltas = get_deltas(volume_claim.annotations)
-    except AnnotationNotFound as exc:
-        raise AnnotationNotFound(
-            'No deltas found via volume claim'
-        ) from exc
 
     # If volume is not annotated, attempt ot read deltas from
     # PersistentVolumeClaim referenced in volume.claimRef
