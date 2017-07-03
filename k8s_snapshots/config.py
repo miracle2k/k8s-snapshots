@@ -61,7 +61,8 @@ def validate_config(config: Dict) -> bool:
 
     is_valid = True
 
-    missing_required_keys = required_keys - set(config.keys())
+    missing_required_keys = required_keys - \
+        set({k: v for k, v in config.items() if v}.keys())
 
     if missing_required_keys:
         _logger.error(
