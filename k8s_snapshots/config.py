@@ -151,11 +151,11 @@ def read_volume_config() -> Dict:
         env_name = name.replace('-', '_').upper()
         deltas_str = os.environ.get('VOLUME_{}_DELTAS'.format(env_name))
         if not deltas_str:
-            raise ConfigError('A volume {} was defined, but {} is not set'.format(name, env_name))
+            raise ConfigError('A volume {} was defined, but VOLUME_{}_DELTAS is not set'.format(name, env_name))
 
         zone = os.environ.get('VOLUME_{}_ZONE'.format(env_name))
         if not zone:
-            raise ConfigError('A volume {} was defined, but {} is not set'.format(name, env_name))
+            raise ConfigError('A volume {} was defined, but VOLUME_{}_ZONE is not set'.format(name, env_name))
 
         _log = _log.bind(
             deltas_str=deltas_str,
@@ -164,6 +164,7 @@ def read_volume_config() -> Dict:
 
         rule = Rule(
             name=name,
+            claim_name='',
             namespace='',
             deltas=parse_deltas(deltas_str),
             gce_disk=name,
