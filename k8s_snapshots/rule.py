@@ -136,7 +136,8 @@ def rule_from_pv(
     try:
         deltas = get_deltas(volume.annotations)
     except AnnotationNotFound as exc:
-        # See if we can find the annotation in a attached volume claim
+        # If volume is not annotated, attempt ot read deltas from
+        # PersistentVolumeClaim referenced in volume.claimRef
         if not claim_ref:
             raise
 
@@ -147,9 +148,6 @@ def rule_from_pv(
         )  # type: Optional[pykube.objects.PersistentVolumeClaim]
 
         deltas = get_deltas(volume_claim.annotations)
-
-    # If volume is not annotated, attempt ot read deltas from
-    # PersistentVolumeClaim referenced in volume.claimRef
 
     claim_name = None
     if use_claim_name:
