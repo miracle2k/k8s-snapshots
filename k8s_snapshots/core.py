@@ -7,7 +7,7 @@ import aiohttp
 import re
 import threading
 from datetime import timedelta
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, List, Tuple
 
 import pendulum
 import pykube
@@ -189,10 +189,18 @@ async def get_rules(ctx):
     _log.debug('get-rules.done')
 
 
-async def load_snapshots(ctx) -> Dict:
+def snapshot_list_filter(ctx: Context) -> str:
+    key, value = snapshot_author_label(ctx)
+    return f'labels.{key} eq {value}'
+
+
+async def load_snapshots(ctx) -> List[Dict]:
     resp = await run_in_executor(
         ctx.gcloud().snapshots()
-        .list(project=ctx.config['gcloud_project'])
+        .list(
+            project=ctx.config['gcloud_project'],
+            filter=snapshot_list_filter(ctx),
+        )
         .execute
     )
     return resp.get('items', [])
@@ -291,11 +299,15 @@ def new_snapshot_name(ctx: Context, rule: Rule) -> str:
     return f'{name_truncated}{suffix}'
 
 
-def make_snapshot_labels(ctx: Context, rule: Rule) -> Dict:
-    return {
-        ctx.config['snapshot_author_label_key']:
-            ctx.config['snapshot_author_label']
-    }
+def snapshot_labels(ctx: Context) -> Dict:
+    return dict([snapshot_author_label(ctx)])
+
+
+def snapshot_author_label(ctx: Context) -> Tuple[str, str]:
+    return (
+        ctx.config['snapshot_author_label_key'],
+        ctx.config['snapshot_author_label']
+    )
 
 
 async def make_backup(ctx, rule):
@@ -356,7 +368,7 @@ async def make_backup(ctx, rule):
     await set_snapshot_labels(
         ctx,
         snapshot,
-        make_snapshot_labels(ctx, rule),
+        snapshot_labels(ctx),
         gcloud=gcloud
     )
 
@@ -448,7 +460,7 @@ async def expire_snapshots(ctx, rule: Rule):
 
     snapshots = await load_snapshots(ctx)
     snapshots = filter_snapshots_by_rule(snapshots, rule)
-    snapshots = {s['name']: pendulum.parse(s['creationTimestamp']) for s in snapshots}
+    snapshots = {s['name']: parse_creation_timestamp(s) for s in snapshots}
 
     to_keep = expire(snapshots, rule.deltas)
     for snapshot_name in snapshots:
