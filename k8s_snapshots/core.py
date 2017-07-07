@@ -120,13 +120,13 @@ def sync_get_rules(ctx):
             except AnnotationNotFound as exc:
                 _log.info(
                     events.Annotation.NOT_FOUND,
-                    key_hints=['volume.name'],
+                    key_hints=['volume.metadata.name'],
                     exc_info=exc,
                 )
             except AnnotationError:
                 _log.exception(
                     events.Annotation.ERROR,
-                    key_hints=['volume.name']
+                    key_hints=['volume.metadata.name']
                 )
 
             if rule:
