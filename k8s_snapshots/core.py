@@ -130,7 +130,7 @@ def sync_get_rules(ctx):
                 )
 
             if rule:
-                _log.bind(
+                _log = _log.bind(
                     rule=rule
                 )
                 if event.type == 'ADDED' or volume_name not in rules:
