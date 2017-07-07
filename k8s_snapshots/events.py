@@ -44,6 +44,7 @@ class Rule(EventEnum):
     ADDED = 'rule.added'
     UPDATED = 'rule.updated'
     REMOVED = 'rule.removed'
+    HEARTBEAT = 'rule.heartbeat'
 
 
 @enum.unique

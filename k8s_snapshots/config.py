@@ -35,6 +35,8 @@ DEFAULT_CONFIG = {
     #: This label will be set on all snapshots created by k8s-snapshots
     'snapshot_author_label': 'k8s-snapshots',
     'snapshot_author_label_key': 'created-by',
+    #: Number of seconds between Rule.HEARTBEAT events, ``0`` to disable.
+    'schedule_heartbeat_interval_seconds': 600,
     #: Turns debug mode on, not recommended in production
     'debug': False,
 }

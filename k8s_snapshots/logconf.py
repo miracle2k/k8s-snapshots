@@ -88,6 +88,11 @@ def add_message(logger, method_name, event_dict):
         for key in key_path.split('.'):
             if value is None:
                 return
+
+            __structlog__ = getattr(value, '__structlog__', None)
+            if __structlog__ is not None:
+                value = __structlog__()
+
             value = value.get(key)
 
         return value
@@ -118,6 +123,8 @@ def add_message(logger, method_name, event_dict):
     hints += from_key_hints(event_dict)
 
     if all(hint is None for hint in hints):
+        if event_dict.get('message') is None:
+            event_dict['message'] = event_dict.get('event')
         return event_dict
 
     prefix = event_dict['event']
@@ -130,22 +137,6 @@ def add_message(logger, method_name, event_dict):
         message = f'{prefix}: {hint}'
 
     event_dict['message'] = message
-    return event_dict
-
-
-def serialize_rules(logger, method_name, event_dict):
-    """
-    Replace Rule instances with their .to_dict() representation in time for
-    add_message to use attributes of it via key_hints.
-    """
-    from k8s_snapshots.rule import Rule
-
-    updates = {}
-    for key, value in event_dict.items():
-        if isinstance(value, Rule):
-            updates[key] = value.to_dict()
-
-    event_dict.update(updates)
     return event_dict
 
 
@@ -218,7 +209,6 @@ def configure_logging(config):
             processors=[
                 event_enum_to_str,
                 ProcessStructuredErrors(),
-                serialize_rules,
                 structlog.stdlib.add_logger_name,
                 structlog.stdlib.add_log_level,
                 structlog.stdlib.PositionalArgumentsFormatter(),
@@ -243,7 +233,6 @@ def configure_logging(config):
                 event_enum_to_str,
                 add_severity,
                 ProcessStructuredErrors(),
-                serialize_rules,
                 structlog.stdlib.add_logger_name,
                 structlog.processors.TimeStamper(fmt='ISO'),
                 structlog.processors.StackInfoRenderer(),

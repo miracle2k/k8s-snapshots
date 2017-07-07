@@ -1,42 +1,113 @@
 from datetime import timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 
 import attr
+import isodate
 import pykube
 import structlog
-from tarsnapper.config import parse_deltas, ConfigError
+from tarsnapper.config import ConfigError
 
 from k8s_snapshots.errors import UnsupportedVolume, AnnotationNotFound, \
     AnnotationError
+from k8s_snapshots.logging import Loggable
 
 _logger = structlog.get_logger(__name__)
 
 
 @attr.s(slots=True)
-class Rule:
+class Rule(Loggable):
     """
     A rule describes how and when to make backups.
     """
-
     name = attr.ib()
-    namespace = attr.ib()
-
     deltas = attr.ib()
     gce_disk = attr.ib()
     gce_disk_zone = attr.ib()
 
-    claim_name = attr.ib()
+    #: For Kubernetes resources: The selfLink of the source
+    source = attr.ib()
 
-    @property
-    def pretty_name(self):
-        return self.claim_name or self.name
+    @classmethod
+    def from_volume(
+            cls,
+            volume: pykube.objects.PersistentVolume,
+            source: Union[
+                pykube.objects.PersistentVolumeClaim,
+                pykube.objects.PersistentVolume
+            ],
+            deltas: List[timedelta],
+    ) -> 'Rule':
+
+        gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
+
+        # How can we know the zone? In theory, the storage class can
+        # specify a zone; but if not specified there, K8s can choose a
+        # random zone within the master region. So we really can't trust
+        # that value anyway.
+        # There is a label that gives a failure region, but labels aren't
+        # really a trustworthy source for this.
+        # Apparently, this is a thing in the Kubernetes source too, see:
+        # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
+        # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
+        gce_disk_zone = volume.labels.get(
+            'failure-domain.beta.kubernetes.io/zone'
+        )
+        if not gce_disk_zone:
+            # Abuse the annotation error class.
+            raise UnsupportedVolume('cannot find the zone of the disk')
+
+        return cls(
+            name=rule_name_from_k8s_source(source),
+            source=source.obj['metadata']['selfLink'],
+            deltas=deltas,
+            gce_disk=gce_disk,
+            gce_disk_zone=gce_disk_zone,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """ Helper, returns attr.asdict(self) """
         return attr.asdict(self)
 
-    def __str__ (self):
-        return self.name
+
+def rule_name_from_k8s_source(
+        source: Union[
+            pykube.objects.PersistentVolumeClaim,
+            pykube.objects.PersistentVolume
+        ]
+) -> str:
+    short_kind = {
+        'PersistentVolume': 'pv',
+        'PersistentVolumeClaim': 'pvc',
+    }.pop(source.kind)
+
+    if source.namespace == 'default':
+        namespace = ''
+    else:
+        namespace = f'{source.namespace}-'
+
+    return f'{namespace}{short_kind}-{source.name}'
+
+
+def parse_deltas(delta_string):
+    """Parse the given string into a list of ``timedelta`` instances.
+    """
+    if delta_string is None:
+        return None
+
+    deltas = []
+    for item in delta_string.split(' '):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            deltas.append(isodate.parse_duration(item))
+        except ValueError as e:
+            raise ConfigError('Not a valid delta: %s' % e)
+
+    if deltas and len(deltas) < 2:
+        raise ConfigError('At least two deltas are required')
+
+    return deltas
 
 
 def rule_from_pv(
@@ -110,55 +181,31 @@ def rule_from_pv(
 
         return deltas
 
-    gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
-
-    # How can we know the zone? In theory, the storage class can
-    # specify a zone; but if not specified there, K8s can choose a
-    # random zone within the master region. So we really can't trust
-    # that value anyway.
-    # There is a label that gives a failure region, but labels aren't
-    # really a trustworthy source for this.
-    # Apparently, this is a thing in the Kubernetes source too, see:
-    # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
-    # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
-    gce_disk_zone = volume.labels.get('failure-domain.beta.kubernetes.io/zone')
-    if not gce_disk_zone:
-        # Abuse the annotation error class.
-        raise AnnotationError('cannot find the zone of the disk')
-
-    rule_kwargs = dict(
-        name=volume.name,
-        namespace=volume.namespace,
-        gce_disk=gce_disk,
-        gce_disk_zone=gce_disk_zone,
-    )
-
     claim_ref = volume.obj['spec'].get('claimRef')
-    _log = _log.bind(claim_ref=claim_ref)
 
     try:
         deltas = get_deltas(volume.annotations)
+        return Rule.from_volume(volume, source=volume, deltas=deltas)
     except AnnotationNotFound as exc:
-        # If volume is not annotated, attempt ot read deltas from
-        # PersistentVolumeClaim referenced in volume.claimRef
-        if not claim_ref:
+        if claim_ref is None:
             raise
 
-        volume_claim = (
-            pykube.objects.PersistentVolumeClaim.objects(api)
-            .filter(namespace=claim_ref['namespace'])
-            .get_or_none(name=claim_ref['name'])
-        )  # type: Optional[pykube.objects.PersistentVolumeClaim]
+    volume_claim = (
+        pykube.objects.PersistentVolumeClaim.objects(api)
+        .filter(namespace=claim_ref['namespace'])
+        .get_or_none(name=claim_ref['name'])
+    )  # type: Optional[pykube.objects.PersistentVolumeClaim]
 
+    if volume_claim is None:
+        raise AnnotationError(
+            'Could not find the PersistentVolumeClaim from claim_ref',
+            claim_ref=claim_ref,
+        )
+
+    try:
         deltas = get_deltas(volume_claim.annotations)
-
-    claim_name = None
-    if use_claim_name:
-        if volume.annotations.get('kubernetes.io/createdby') == 'gce-pd-dynamic-provisioner':
-            claim_name = f"{claim_ref['namespace']}--{claim_ref['name']}"
-
-    return Rule(
-        deltas=deltas,
-        claim_name=claim_name,
-        **rule_kwargs,
-    )
+        return Rule.from_volume(volume, source=volume_claim, deltas=deltas)
+    except AnnotationNotFound as exc:
+        raise AnnotationNotFound(
+            'No deltas found via volume claim'
+        ) from exc

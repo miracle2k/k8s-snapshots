@@ -7,17 +7,13 @@ from googleapiclient import discovery
 from oauth2client.service_account import ServiceAccountCredentials
 from oauth2client.client import GoogleCredentials
 
-from k8s_snapshots.config import DEFAULT_CONFIG
-
 _logger = structlog.get_logger()
 
 
 class Context:
-
     def __init__(self, config=None):
         self.config = config
         self.kube = self.make_kubeclient()
-        self.gcloud = self.make_gclient()
 
     def make_kubeclient(self):
         cfg = None
@@ -44,7 +40,18 @@ class Context:
 
         return pykube.HTTPClient(cfg)
 
-    def make_gclient(self):
+    def gcloud(self, version: str='v1'):
+        """
+        Get a configured Google Compute API Client instance.
+
+        Note that the Google API Client is not threadsafe. Cache the instance locally
+        if you want to avoid OAuth overhead between calls.
+
+        Parameters
+        ----------
+        version
+            Compute API version
+        """
         SCOPES = 'https://www.googleapis.com/auth/compute'
         credentials = None
 
@@ -66,7 +73,7 @@ class Context:
 
         compute = discovery.build(
             'compute',
-            'v1',
+            version,
             credentials=credentials,
         )
         return compute
