@@ -242,16 +242,17 @@ def sync_get_rules(ctx):
         vid = event.object.name
 
         storage_class_name = event.object.annotations.get('volume.beta.kubernetes.io/storage-class')
+        logger.debug('storage class name: {}', storage_class_name)
 
-        if not storage_class_name:
-            logger.debug('Skipping volume with no StorageClass.')
+        if not storage_class_name or storage_class_name == 'default':
+            logger.debug('Skipping volume with no (or default) StorageClass: {}.', event)
             rules.pop(vid, False)
             continue
 
         storage_class = pykube_objects.StorageClass.objects(api).get_by_name(storage_class_name)
+        logger.debug('storage class: {}', storage_class)
 
-
-        if event.type == 'ADDED' or event.type == 'MODIFIED':
+        if storage_class and (event.type == 'ADDED' or event.type == 'MODIFIED'):
             rule = rule_from_pv(
                 event.object, storage_class.obj, use_claim_name=ctx.config.get('use_claim_name'))
             if rule:
