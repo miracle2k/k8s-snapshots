@@ -13,36 +13,6 @@ class ProcessStructuredErrors:
     def __init__(self):
         pass
 
-    def _exc_chain(self, start_exc: Exception) -> Iterable[Exception]:
-        chain = []  # reverse chronological order
-        exc = start_exc
-
-        while exc is not None:
-            chain.append(exc)
-            exc = exc.__cause__
-
-        return reversed(chain)
-
-    def _serializable_exc(self, exc_: Exception) -> List[Dict]:
-        def serialize_exc(exc: Exception) -> Dict:
-            if isinstance(exc, StructuredError):
-                return exc.to_dict()
-            else:
-                exc_type = exc.__class__
-                exc_tb = exc.__traceback__
-                return {
-                    'type': exc_type.__qualname__,
-                    'message': str(exc),
-                    'readable': traceback.format_exception(
-                        exc_type,
-                        exc,
-                        exc_tb,
-                        chain=False
-                    )
-                }
-
-        return [serialize_exc(exc) for exc in self._exc_chain(exc_)]
-
     def __call__(self, logger, method_name, event_dict):
         exc_info = event_dict.pop('exc_info', None)
 
@@ -52,11 +22,13 @@ class ProcessStructuredErrors:
         exc_type, exc, exc_tb = structlog.processors._figure_out_exc_info(
             exc_info)
 
-        if not isinstance(exc, StructuredError):
+        __structlog__ = getattr(exc, '__structlog__', None)
+
+        if not callable(__structlog__):
             event_dict['exc_info'] = exc_info
             return event_dict
 
-        structured_error = self._serializable_exc(exc)
+        structured_error = __structlog__()
         event_dict['structured_error'] = structured_error
 
         return event_dict
@@ -140,13 +112,44 @@ def add_message(logger, method_name, event_dict):
     return event_dict
 
 
-def configure_logging(config):
-    level = logbook.lookup_level(config['log_level'])
+def configure_from_config(config):
+    configure_logging(
+        level_name=config['log_level'],
+        for_humans=config['structlog_dev'],
+        json_indent=config['structlog_json_indent'] or None,
+    )
+
+
+def configure_logging(
+        level_name: str='INFO',
+        for_humans: bool=False,
+        json_indent: Optional[int]=None,
+):
+    configure_logbook(level_name)
+    configure_structlog(
+        for_humans=for_humans,
+        json_indent=json_indent,
+        level_name=level_name,
+    )
+
+
+def configure_logbook(
+        level_name: str
+):
+    level = logbook.lookup_level(level_name)
     handler = logbook.StderrHandler(
         level=level,
         format_string='{record.message}')
 
     handler.push_application()
+
+
+def configure_structlog(
+        for_humans: bool=False,
+        json_indent: Optional[int]=None,
+        level_name: str='INFO'
+):
+    level = logbook.lookup_level(level_name)
 
     def logger_factory(name=None):
         from structlog._frames import _find_first_app_frame_and_name
@@ -157,6 +160,7 @@ def configure_logging(config):
                     f'{__package__}.logconf',
                 ]
             )
+
         return logbook.Logger(name, level=level)
 
     def add_severity(logger, method_name, event_dict):
@@ -204,7 +208,7 @@ def configure_logging(config):
 
     key_order = ['message', 'event', 'level']
 
-    if config['structlog_dev']:
+    if for_humans:
         structlog.configure(
             processors=[
                 event_enum_to_str,
@@ -227,7 +231,7 @@ def configure_logging(config):
         )
     else:
         # Make it so that 0 ⇒ None
-        indent = config['structlog_json_indent'] or None
+        indent = json_indent or None
         structlog.configure(
             processors=[
                 event_enum_to_str,

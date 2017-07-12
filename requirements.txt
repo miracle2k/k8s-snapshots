@@ -10,3 +10,4 @@ confcollect==0.2.3
 isodate==0.5.4
 python-dateutil==2.6.0
 aiohttp==2.2.2
+aiostream==0.2.4

@@ -5,11 +5,11 @@ import confcollect
 import pendulum
 import re
 import structlog
-from tarsnapper.config import ConfigError, parse_deltas
+from tarsnapper.config import ConfigError
 
 from k8s_snapshots import events
 from k8s_snapshots.errors import ConfigurationError
-from k8s_snapshots.rule import Rule
+from k8s_snapshots.rule import Rule, parse_deltas
 
 _logger = structlog.get_logger()
 
@@ -167,8 +167,6 @@ def read_volume_config() -> Dict:
 
         rule = Rule(
             name=name,
-            claim_name='',
-            namespace='',
             deltas=parse_deltas(deltas_str),
             gce_disk=name,
             gce_disk_zone=zone,

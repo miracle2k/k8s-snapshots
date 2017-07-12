@@ -7,19 +7,19 @@ import confcollect
 import structlog
 
 import k8s_snapshots.config
-from k8s_snapshots.logconf import configure_logging
+from k8s_snapshots.logconf import configure_from_config
 from k8s_snapshots.core import daemon
 
 
 def main():
     config = k8s_snapshots.config.from_environ()
 
-    configure_logging(config)
+    configure_from_config(config)
 
     if config['debug']:
         sys.excepthook = debug_excepthook
 
-    # Late import to keep module-level get_logger after configure_logging
+    # Late import to keep module-level get_logger after configure_from_config
     _logger = structlog.get_logger(__name__)
 
     _logger.bind(

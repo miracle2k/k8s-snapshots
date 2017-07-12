@@ -7,8 +7,14 @@ import pykube
 import structlog
 from tarsnapper.config import ConfigError
 
-from k8s_snapshots.errors import UnsupportedVolume, AnnotationNotFound, \
-    AnnotationError
+from k8s_snapshots import kube
+from k8s_snapshots.context import Context
+from k8s_snapshots.errors import (
+    UnsupportedVolume,
+    AnnotationNotFound,
+    AnnotationError,
+    DeltasParseError
+)
 from k8s_snapshots.logging import Loggable
 
 _logger = structlog.get_logger(__name__)
@@ -25,7 +31,7 @@ class Rule(Loggable):
     gce_disk_zone = attr.ib()
 
     #: For Kubernetes resources: The selfLink of the source
-    source = attr.ib()
+    source = attr.ib(default=None)
 
     @classmethod
     def from_volume(
@@ -80,12 +86,29 @@ def rule_name_from_k8s_source(
         'PersistentVolumeClaim': 'pvc',
     }.pop(source.kind)
 
-    if source.namespace == 'default':
+    source_namespace = source.namespace
+
+    if source_namespace == 'default' or source_namespace is None:
         namespace = ''
     else:
         namespace = f'{source.namespace}-'
 
-    return f'{namespace}{short_kind}-{source.name}'
+    rule_name = f'{namespace}{short_kind}-{source.name}'
+
+    _logger.debug(
+        'rule-name-from-k8s',
+        key_hints=[
+            'source_namespace',
+            'source.kind',
+            'source.metadata.namespace',
+            'source.metadata.name',
+            'rule_name',
+        ],
+        source_namespace=source_namespace,
+        source=source.obj,
+        rule_name=rule_name,
+    )
+    return rule_name
 
 
 def parse_deltas(delta_string):
@@ -101,20 +124,29 @@ def parse_deltas(delta_string):
             continue
         try:
             deltas.append(isodate.parse_duration(item))
-        except ValueError as e:
-            raise ConfigError('Not a valid delta: %s' % e)
+        except ValueError as exc:
+            raise DeltasParseError(
+                f'Could not parse duration: {item!r}',
+                item=item,
+                deltas=deltas,
+                delta_string=delta_string,
+            ) from exc
 
     if deltas and len(deltas) < 2:
-        raise ConfigError('At least two deltas are required')
+        raise DeltasParseError(
+            'At least two deltas are required',
+            deltas=deltas,
+            delta_string=delta_string,
+        )
 
     return deltas
 
 
-def rule_from_pv(
+async def rule_from_pv(
+        ctx: Context,
         volume: pykube.objects.PersistentVolume,
-        api: pykube.HTTPClient,
         deltas_annotation_key: str,
-        use_claim_name: bool=False
+        use_claim_name: bool=False,
 ) -> Rule:
     """Given a persistent volume object, create a backup role
     object. Can return None if this volume is not configured for
@@ -166,7 +198,7 @@ def rule_from_pv(
 
         try:
             deltas = parse_deltas(deltas_str)
-        except ConfigError as exc:
+        except DeltasParseError as exc:
             raise AnnotationError(
                 'Invalid delta string',
                 deltas_str=deltas_str
@@ -186,15 +218,16 @@ def rule_from_pv(
     try:
         deltas = get_deltas(volume.annotations)
         return Rule.from_volume(volume, source=volume, deltas=deltas)
-    except AnnotationNotFound as exc:
+    except AnnotationNotFound:
         if claim_ref is None:
             raise
 
-    volume_claim = (
-        pykube.objects.PersistentVolumeClaim.objects(api)
-        .filter(namespace=claim_ref['namespace'])
-        .get_or_none(name=claim_ref['name'])
-    )  # type: Optional[pykube.objects.PersistentVolumeClaim]
+    volume_claim = await kube.get_resource_or_none(
+        ctx,
+        pykube.objects.PersistentVolumeClaim,
+        claim_ref['name'],
+        namespace=claim_ref['namespace'],
+    )
 
     if volume_claim is None:
         raise AnnotationError(
@@ -209,3 +242,4 @@ def rule_from_pv(
         raise AnnotationNotFound(
             'No deltas found via volume claim'
         ) from exc
+
