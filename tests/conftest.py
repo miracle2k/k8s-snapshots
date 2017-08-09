@@ -10,3 +10,5 @@ def configured_logging():
         for_humans=True,
     )
 
+from .fixtures import *  # noqa
+from .fixtures.kube import *  # noqa

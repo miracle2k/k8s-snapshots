@@ -2,16 +2,7 @@ import os
 import pytest
 import contextlib
 import datetime
-import k8s_snapshots.config
-from k8s_snapshots.logconf import configure_from_config
 from k8s_snapshots.config import read_volume_config
-
-
-@pytest.fixture(autouse=True, scope='session')
-def setup_logging():
-    os.environ['GCLOUD_PROJECT'] = 'foo'
-    config = k8s_snapshots.config.from_environ()
-    configure_from_config(config)
 
 
 @contextlib.contextmanager
@@ -46,9 +37,9 @@ class TestManualVolumes:
     def test_find_volumes(self):
         with set_env(**{
             'VOLUMES': 'foo,bar',
-            'VOLUME_FOO_DELTAS': '1d 7d',
+            'VOLUME_FOO_DELTAS': 'P1D P7D',
             'VOLUME_FOO_ZONE': 'eu-central-1',
-            'VOLUME_BAR_DELTAS': '1d 2d',
+            'VOLUME_BAR_DELTAS': 'P1D P2D',
             'VOLUME_BAR_ZONE': 'eu-west-1',
         }):
             rules = read_volume_config()['rules']

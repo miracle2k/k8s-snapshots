@@ -1,11 +1,9 @@
-import traceback
 from collections import OrderedDict
-from typing import Optional, List, Any, Dict, Iterable
+from typing import Optional, List, Any, Dict
 
 import logbook
 import structlog
 
-from k8s_snapshots.errors import StructuredError
 from k8s_snapshots.serialize import SnapshotsJSONEncoder
 
 
@@ -226,7 +224,7 @@ def configure_structlog(
             ],
             context_class=OrderedDict,
             logger_factory=logger_factory,
-            wrapper_class=structlog.stdlib.BoundLogger,
+            wrapper_class=structlog.BoundLogger,
             cache_logger_on_first_use=True,
         )
     else:
@@ -250,7 +248,7 @@ def configure_structlog(
                 )
             ],
             context_class=OrderedDict,
-            wrapper_class=structlog.stdlib.BoundLogger,
+            wrapper_class=structlog.BoundLogger,
             logger_factory=logger_factory,
             cache_logger_on_first_use=True,
         )

@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Iterable
 
 import attr
 import isodate
@@ -88,7 +88,8 @@ def rule_name_from_k8s_source(
 
     source_namespace = source.namespace
 
-    if source_namespace == 'default' or source_namespace is None:
+    # PV's have a namespace set to an empty string ''
+    if source_namespace == 'default' or not source_namespace:
         namespace = ''
     else:
         namespace = f'{source.namespace}-'
@@ -112,7 +113,7 @@ def rule_name_from_k8s_source(
 
 
 def parse_deltas(delta_string):
-    """Parse the given string into a list of ``timedelta`` instances.
+    """q§Parse the given string into a list of ``timedelta`` instances.
     """
     if delta_string is None:
         return None
@@ -142,6 +143,14 @@ def parse_deltas(delta_string):
     return deltas
 
 
+def serialize_deltas(deltas: Iterable[timedelta]) -> str:
+    delta_strs = [
+        isodate.duration_isoformat(delta)
+        for delta in deltas
+    ]
+    return ' '.join(delta_strs)
+
+
 async def rule_from_pv(
         ctx: Context,
         volume: pykube.objects.PersistentVolume,
@@ -166,14 +175,14 @@ async def rule_from_pv(
     # Verify the provider
 
     provisioner = volume.annotations.get('pv.kubernetes.io/provisioned-by')
-    _log = _log.bind(provider=provisioner)
+    _log = _log.bind(provisioner=provisioner)
     if provisioner != 'kubernetes.io/gce-pd':
         raise UnsupportedVolume(
             'Unsupported provisioner',
             provisioner=provisioner
         )
 
-    def get_deltas(annotations: Dict) -> Optional[List[timedelta]]:
+    def get_deltas(annotations: Dict) -> List[timedelta]:
         """
         Helper annotation-deltas-getter
 
@@ -216,6 +225,7 @@ async def rule_from_pv(
     claim_ref = volume.obj['spec'].get('claimRef')
 
     try:
+        _log.debug('Checking volume for deltas')
         deltas = get_deltas(volume.annotations)
         return Rule.from_volume(volume, source=volume, deltas=deltas)
     except AnnotationNotFound:
@@ -223,7 +233,7 @@ async def rule_from_pv(
             raise
 
     volume_claim = await kube.get_resource_or_none(
-        ctx,
+        ctx.kube_client,
         pykube.objects.PersistentVolumeClaim,
         claim_ref['name'],
         namespace=claim_ref['namespace'],
@@ -236,6 +246,7 @@ async def rule_from_pv(
         )
 
     try:
+        _log.debug('Checking volume claim for deltas')
         deltas = get_deltas(volume_claim.annotations)
         return Rule.from_volume(volume, source=volume_claim, deltas=deltas)
     except AnnotationNotFound as exc:

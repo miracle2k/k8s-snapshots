@@ -10,6 +10,7 @@ TODO: Support loading configuration from a configmap.
 TODO: We could use a third party resource type, too.
 """
 import asyncio
+from typing import Union
 
 import pendulum
 import pykube
@@ -40,34 +41,53 @@ from k8s_snapshots.snapshot import (
 _logger = structlog.get_logger()
 
 
-async def volume_from_resource_event(
+async def volume_from_resource(
         ctx: Context,
-        event
+        resource: Union[
+            pykube.objects.PersistentVolume,
+            pykube.objects.PersistentVolumeClaim,
+        ]
 ) -> pykube.objects.PersistentVolume:
-    if isinstance(event.object, pykube.objects.PersistentVolume):
-        return event.object
-    elif isinstance(event.object, pykube.objects.PersistentVolumeClaim):
-        pvc = event.object
+    _log = _logger.new(resource=resource)
+    if isinstance(resource, pykube.objects.PersistentVolume):
+        return resource
+    elif isinstance(resource, pykube.objects.PersistentVolumeClaim):
+        pvc = resource
 
         try:
-            volume_name = event.object.obj['spec']['volumeName']
+            volume_name = resource.obj['spec']['volumeName']
         except KeyError as exc:
             raise VolumeNotFound(
                 'Could not get volume name from volume claim',
                 volume_claim=pvc.obj
             ) from exc
 
+        _log = _log.bind(
+            volume_name=volume_name
+        )
+
+        _log.debug(
+            'Looking for volume',
+            key_hints=['volume_name']
+        )
+
         volume = await get_resource_or_none(
-            ctx,
+            ctx.kube_client,
             pykube.objects.PersistentVolume,
             volume_name,
-        )  # type: pykube.objects.PersistentVolume
+        )
         if volume is None:
             raise VolumeNotFound(
                 f'Could not find volume with name {volume_name!r}',
                 volume_claim=pvc.obj,
             )
         return volume
+    else:
+        raise VolumeNotFound(
+            f'It is not possible to get a volume object for an object of type '
+            f'{type(resource)}',
+            resource=resource,
+        )
 
 
 async def rules_from_volumes(ctx):
@@ -81,7 +101,6 @@ async def rules_from_volumes(ctx):
     )
 
     async with merged_stream.stream() as merged_events:
-
         async for event in merged_events:
             _log_event = _logger.bind(
                 event_type=event.type,
@@ -95,7 +114,7 @@ async def rules_from_volumes(ctx):
                 ],
             )
             try:
-                volume = await volume_from_resource_event(ctx, event)
+                volume = await volume_from_resource(ctx, event.object)
             except VolumeNotFound:
                 _log_event.exception(
                     events.Volume.NOT_FOUND,
