@@ -1,47 +1,15 @@
-import traceback
 from collections import OrderedDict
-from typing import Optional, List, Any, Dict, Iterable
+from typing import Optional, List, Any, Dict
 
 import logbook
 import structlog
 
-from k8s_snapshots.errors import StructuredError
 from k8s_snapshots.serialize import SnapshotsJSONEncoder
 
 
 class ProcessStructuredErrors:
     def __init__(self):
         pass
-
-    def _exc_chain(self, start_exc: Exception) -> Iterable[Exception]:
-        chain = []  # reverse chronological order
-        exc = start_exc
-
-        while exc is not None:
-            chain.append(exc)
-            exc = exc.__cause__
-
-        return reversed(chain)
-
-    def _serializable_exc(self, exc_: Exception) -> List[Dict]:
-        def serialize_exc(exc: Exception) -> Dict:
-            if isinstance(exc, StructuredError):
-                return exc.to_dict()
-            else:
-                exc_type = exc.__class__
-                exc_tb = exc.__traceback__
-                return {
-                    'type': exc_type.__qualname__,
-                    'message': str(exc),
-                    'readable': traceback.format_exception(
-                        exc_type,
-                        exc,
-                        exc_tb,
-                        chain=False
-                    )
-                }
-
-        return [serialize_exc(exc) for exc in self._exc_chain(exc_)]
 
     def __call__(self, logger, method_name, event_dict):
         exc_info = event_dict.pop('exc_info', None)
@@ -52,11 +20,13 @@ class ProcessStructuredErrors:
         exc_type, exc, exc_tb = structlog.processors._figure_out_exc_info(
             exc_info)
 
-        if not isinstance(exc, StructuredError):
+        __structlog__ = getattr(exc, '__structlog__', None)
+
+        if not callable(__structlog__):
             event_dict['exc_info'] = exc_info
             return event_dict
 
-        structured_error = self._serializable_exc(exc)
+        structured_error = __structlog__()
         event_dict['structured_error'] = structured_error
 
         return event_dict
@@ -88,6 +58,11 @@ def add_message(logger, method_name, event_dict):
         for key in key_path.split('.'):
             if value is None:
                 return
+
+            __structlog__ = getattr(value, '__structlog__', None)
+            if __structlog__ is not None:
+                value = __structlog__()
+
             value = value.get(key)
 
         return value
@@ -118,6 +93,8 @@ def add_message(logger, method_name, event_dict):
     hints += from_key_hints(event_dict)
 
     if all(hint is None for hint in hints):
+        if event_dict.get('message') is None:
+            event_dict['message'] = event_dict.get('event')
         return event_dict
 
     prefix = event_dict['event']
@@ -133,29 +110,44 @@ def add_message(logger, method_name, event_dict):
     return event_dict
 
 
-def serialize_rules(logger, method_name, event_dict):
-    """
-    Replace Rule instances with their .to_dict() representation in time for
-    add_message to use attributes of it via key_hints.
-    """
-    from k8s_snapshots.rule import Rule
-
-    updates = {}
-    for key, value in event_dict.items():
-        if isinstance(value, Rule):
-            updates[key] = value.to_dict()
-
-    event_dict.update(updates)
-    return event_dict
+def configure_from_config(config):
+    configure_logging(
+        level_name=config['log_level'],
+        for_humans=config['structlog_dev'],
+        json_indent=config['structlog_json_indent'] or None,
+    )
 
 
-def configure_logging(config):
-    level = logbook.lookup_level(config['log_level'])
+def configure_logging(
+        level_name: str='INFO',
+        for_humans: bool=False,
+        json_indent: Optional[int]=None,
+):
+    configure_logbook(level_name)
+    configure_structlog(
+        for_humans=for_humans,
+        json_indent=json_indent,
+        level_name=level_name,
+    )
+
+
+def configure_logbook(
+        level_name: str
+):
+    level = logbook.lookup_level(level_name)
     handler = logbook.StderrHandler(
         level=level,
         format_string='{record.message}')
 
     handler.push_application()
+
+
+def configure_structlog(
+        for_humans: bool=False,
+        json_indent: Optional[int]=None,
+        level_name: str='INFO'
+):
+    level = logbook.lookup_level(level_name)
 
     def logger_factory(name=None):
         from structlog._frames import _find_first_app_frame_and_name
@@ -166,6 +158,7 @@ def configure_logging(config):
                     f'{__package__}.logconf',
                 ]
             )
+
         return logbook.Logger(name, level=level)
 
     def add_severity(logger, method_name, event_dict):
@@ -213,12 +206,11 @@ def configure_logging(config):
 
     key_order = ['message', 'event', 'level']
 
-    if config['structlog_dev']:
+    if for_humans:
         structlog.configure(
             processors=[
                 event_enum_to_str,
                 ProcessStructuredErrors(),
-                serialize_rules,
                 structlog.stdlib.add_logger_name,
                 structlog.stdlib.add_log_level,
                 structlog.stdlib.PositionalArgumentsFormatter(),
@@ -232,18 +224,17 @@ def configure_logging(config):
             ],
             context_class=OrderedDict,
             logger_factory=logger_factory,
-            wrapper_class=structlog.stdlib.BoundLogger,
+            wrapper_class=structlog.BoundLogger,
             cache_logger_on_first_use=True,
         )
     else:
         # Make it so that 0 ⇒ None
-        indent = config['structlog_json_indent'] or None
+        indent = json_indent or None
         structlog.configure(
             processors=[
                 event_enum_to_str,
                 add_severity,
                 ProcessStructuredErrors(),
-                serialize_rules,
                 structlog.stdlib.add_logger_name,
                 structlog.processors.TimeStamper(fmt='ISO'),
                 structlog.processors.StackInfoRenderer(),
@@ -257,7 +248,7 @@ def configure_logging(config):
                 )
             ],
             context_class=OrderedDict,
-            wrapper_class=structlog.stdlib.BoundLogger,
+            wrapper_class=structlog.BoundLogger,
             logger_factory=logger_factory,
             cache_logger_on_first_use=True,
         )

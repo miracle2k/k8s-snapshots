@@ -24,6 +24,24 @@ class Annotation(EventEnum):
 
 
 @enum.unique
+class VolumeEvent(EventEnum):
+    """
+    Events related to Kubernetes PersistentVolume and PersistentVolumeClaim
+    resource events.
+    """
+    RECEIVED = 'volume-event.received'
+
+
+@enum.unique
+class Volume(EventEnum):
+    """
+    Events related to Kubernetes PersistentVolumes
+    """
+    UNSUPPORTED = 'volume.unsupported'
+    NOT_FOUND = 'volume.not-found'
+
+
+@enum.unique
 class Snapshot(EventEnum):
     """
     Events related to snapshots.
@@ -44,6 +62,7 @@ class Rule(EventEnum):
     ADDED = 'rule.added'
     UPDATED = 'rule.updated'
     REMOVED = 'rule.removed'
+    HEARTBEAT = 'rule.heartbeat'
 
 
 @enum.unique

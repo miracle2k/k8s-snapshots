@@ -1,175 +1,205 @@
 #!/usr/bin/env python3
 """Written in asyncio as a learning experiment. Python because the
 backup expiration logic is already in tarsnapper and well tested.
+
+TODO: prevent a backup loop: A failsafe mechanism to make sure we
+  don't create more than x snapshots per disk; in case something
+  is wrong with the code that loads the exsting snapshots from GCloud.
+TODO: Support http ping after every backup.
+TODO: Support loading configuration from a configmap.
+TODO: We could use a third party resource type, too.
 """
 import asyncio
-import aiohttp
-import re
-import threading
-from datetime import timedelta
-from typing import Dict, Iterable
+from typing import Union
 
 import pendulum
 import pykube
 import structlog
 from aiochannel import Channel, ChannelEmpty
-from tarsnapper.expire import expire
+from aiostream import stream
 
-from k8s_snapshots import errors, events
-from k8s_snapshots.asyncutils import combine_latest, run_in_executor
-# TODO: prevent a backup loop: A failsafe mechanism to make sure we
-#   don't create more than x snapshots per disk; in case something
-#   is wrong with the code that loads the exsting snapshots from GCloud.
-# TODO: Support http ping after every backup.
-# TODO: Support loading configuration from a configmap.
-# TODO: We could use a third party resource type, too.
+from k8s_snapshots import events
+from k8s_snapshots.asyncutils import combine_latest
 from k8s_snapshots.context import Context
-from k8s_snapshots.errors import AnnotationNotFound, AnnotationError
-from k8s_snapshots.rule import Rule, rule_from_pv
+from k8s_snapshots.errors import (
+    AnnotationNotFound,
+    AnnotationError,
+    UnsupportedVolume,
+    VolumeNotFound
+)
+from k8s_snapshots.kube import (
+    watch_resources,
+    get_resource_or_none
+)
+from k8s_snapshots.rule import rule_from_pv
+from k8s_snapshots.snapshot import (
+    make_backup,
+    get_snapshots,
+    determine_next_snapshot
+)
 
 _logger = structlog.get_logger()
 
 
-def filter_snapshots_by_rule(snapshots, rule) -> Iterable:
-    def match_disk(snapshot):
-        url_part = '/zones/{zone}/disks/{name}'.format(
-            zone=rule.gce_disk_zone, name=rule.gce_disk)
-        return snapshot['sourceDisk'].endswith(url_part)
-    return filter(match_disk, snapshots)
+async def volume_from_resource(
+        ctx: Context,
+        resource: Union[
+            pykube.objects.PersistentVolume,
+            pykube.objects.PersistentVolumeClaim,
+        ]
+) -> pykube.objects.PersistentVolume:
+    _log = _logger.new(resource=resource)
+    if isinstance(resource, pykube.objects.PersistentVolume):
+        return resource
+    elif isinstance(resource, pykube.objects.PersistentVolumeClaim):
+        pvc = resource
 
+        try:
+            volume_name = resource.obj['spec']['volumeName']
+        except KeyError as exc:
+            raise VolumeNotFound(
+                'Could not get volume name from volume claim',
+                volume_claim=pvc.obj
+            ) from exc
 
-def determine_next_snapshot(snapshots, rules):
-    """
-    Given a list of snapshots, and a list of rules, determine the next snapshot
-    to be made.
-
-    Returns a 2-tuple (rule, target_datetime)
-    """
-    next_rule = None
-    next_timestamp = None
-
-    for rule in rules:
-        _log = _logger.new(rule=rule)
-        # Find all the snapshots that match this rule
-        filtered = filter_snapshots_by_rule(snapshots, rule)
-        # Rewrite the list to snapshot
-        filtered = map(lambda s: pendulum.parse(s['creationTimestamp']), filtered)
-        # Sort by timestamp
-        filtered = sorted(filtered, reverse=True)
-        filtered = list(filtered)
-
-        # There are no snapshots for this rule; create the first one.
-        if not filtered:
-            next_rule = rule
-            next_timestamp = pendulum.now('utc') + timedelta(seconds=10)
-            _log.info(
-                events.Snapshot.SCHEDULED,
-                target=next_timestamp,
-                key_hints=['rule'],
-            )
-            break
-
-        target = filtered[0] + rule.deltas[0]
-        if not next_timestamp or target < next_timestamp:
-            next_rule = rule
-            next_timestamp = target
-
-    if next_rule is not None and next_timestamp is not None:
-        _logger.info(
-            events.Snapshot.SCHEDULED,
-            target=next_timestamp,
-            rule=next_rule,
+        _log = _log.bind(
+            volume_name=volume_name
         )
 
-    return next_rule, next_timestamp
+        _log.debug(
+            'Looking for volume',
+            key_hints=['volume_name']
+        )
+
+        volume = await get_resource_or_none(
+            ctx.kube_client,
+            pykube.objects.PersistentVolume,
+            volume_name,
+        )
+        if volume is None:
+            raise VolumeNotFound(
+                f'Could not find volume with name {volume_name!r}',
+                volume_claim=pvc.obj,
+            )
+        return volume
+    else:
+        raise VolumeNotFound(
+            f'It is not possible to get a volume object for an object of type '
+            f'{type(resource)}',
+            resource=resource,
+        )
 
 
-def sync_get_rules(ctx):
+async def rules_from_volumes(ctx):
     rules = {}
-    api = ctx.make_kubeclient()
 
     _logger.debug('volume-events.watch')
-    stream = pykube.objects.PersistentVolume.objects(api).watch().object_stream()
 
-    for event in stream:
-        volume_name = event.object.name
-        _log = _logger.new(
-            volume_name=volume_name,
-            volume_event_type=event.type,
-            volume=event.object.obj,
-        )
+    merged_stream = stream.merge(
+        watch_resources(ctx, pykube.objects.PersistentVolume),
+        watch_resources(ctx, pykube.objects.PersistentVolumeClaim)
+    )
 
-        _log.debug('volume-event.received')
-
-        if event.type == 'ADDED' or event.type == 'MODIFIED':
-            rule = None
+    async with merged_stream.stream() as merged_events:
+        async for event in merged_events:
+            _log_event = _logger.bind(
+                event_type=event.type,
+                event_object=event.object.obj,
+            )
+            _log_event.info(
+                events.VolumeEvent.RECEIVED,
+                key_hints=[
+                    'event_type',
+                    'event_object.metadata.name',
+                ],
+            )
             try:
-                rule = rule_from_pv(
-                    event.object,
-                    api,
-                    ctx.config.get('deltas_annotation_key'),
-                    use_claim_name=ctx.config.get('use_claim_name'))
-            except AnnotationNotFound as exc:
-                _log.info(
-                    events.Annotation.NOT_FOUND,
-                    exc_info=exc,
+                volume = await volume_from_resource(ctx, event.object)
+            except VolumeNotFound:
+                _log_event.exception(
+                    events.Volume.NOT_FOUND,
+                    key_hints=[
+                        'event_type',
+                        'event_object.metadata.name',
+                    ],
                 )
-            except AnnotationError:
-                _log.exception(events.Annotation.ERROR)
+                continue
 
-            if rule:
-                _log.bind(
+            volume_name = volume.name
+            _log = _logger.new(
+                volume_name=volume_name,
+                volume_event_type=event.type,
+                volume=volume.obj,
+            )
+
+            if event.type == 'ADDED' or event.type == 'MODIFIED':
+                rule = None
+                try:
+                    rule = await rule_from_pv(
+                        ctx,
+                        volume,
+                        ctx.config.get('deltas_annotation_key'),
+                        use_claim_name=ctx.config.get('use_claim_name'))
+                except AnnotationNotFound as exc:
+                    _log.info(
+                        events.Annotation.NOT_FOUND,
+                        key_hints=['volume.metadata.name'],
+                        exc_info=exc,
+                    )
+                except AnnotationError:
+                    _log.exception(
+                        events.Annotation.ERROR,
+                        key_hints=['volume.metadata.name'],
+                    )
+                except UnsupportedVolume as exc:
+                    _log.info(
+                        events.Volume.UNSUPPORTED,
+                        key_hints=['volume.metadata.name'],
+                        exc_info=exc,
+                    )
+
+                _log = _log.bind(
                     rule=rule
                 )
-                if event.type == 'ADDED' or volume_name not in rules:
-                    _log.info(events.Rule.ADDED)
+
+                if rule:
+                    if event.type == 'ADDED' or volume_name not in rules:
+                        _log.info(
+                            events.Rule.ADDED,
+                            key_hints=['rule.name']
+                        )
+                    else:
+                        _log.info(
+                            events.Rule.UPDATED,
+                            key_hints=['rule.name']
+                        )
+                    rules[volume_name] = rule
                 else:
-                    _log.info(events.Rule.UPDATED)
-                rules[volume_name] = rule
-            else:
+                    if volume_name in rules:
+                        _log.info(
+                            events.Rule.REMOVED,
+                            key_hints=['volume_name']
+                        )
+                        rules.pop(volume_name)
+            elif event.type == 'DELETED':
                 if volume_name in rules:
-                    _log.info(events.Rule.REMOVED)
-                    rules.pop(volume_name, False)
-        elif event.type == 'DELETED':
-            _log.info(events.Rule.REMOVED)
-            rules.pop(volume_name, False)
-        else:
-            _log.warning('Unhandled event')
+                    _log.info(
+                        events.Rule.REMOVED,
+                        key_hints=['volume_name']
+                    )
+                    rules.pop(volume_name)
+            else:
+                _log.warning('Unhandled event')
 
-        yield list(rules.values())
+            yield list(rules.values())
 
-    _logger.debug('sync-get-rules.done')
+        _logger.debug('sync-get-rules.done')
 
 
 async def get_rules(ctx):
-    channel = Channel()
-    loop = asyncio.get_event_loop()
     _log = _logger.new()
 
-    _log.debug('get-rules.start')
-
-    def worker():
-        # sys.settrace(TracePrinter())
-        try:
-            _log.debug('Iterating in thread')
-            for value in sync_get_rules(ctx):
-                asyncio.ensure_future(channel.put(value), loop=loop)
-        except:
-            _log.exception('rules.error')
-        finally:
-            _log.warning('Closing channel')
-            channel.close()
-
-    thread = threading.Thread(
-        target=worker,
-        name='get_rules',
-        daemon=True
-    )
-
-    _log.debug('get-rules.thread.start')
-    thread.start()
-
-    async for item in channel:
+    async for item in rules_from_volumes(ctx):
         rules = ctx.config.get('rules') + item
         _log.debug('get-rules.rules.updated', rules=rules)
         yield rules
@@ -177,28 +207,7 @@ async def get_rules(ctx):
     _log.debug('get-rules.done')
 
 
-async def load_snapshots(ctx) -> Dict:
-    resp = await run_in_executor(
-        ctx.make_gclient().snapshots()
-        .list(project=ctx.config['gcloud_project'])
-        .execute
-    )
-    return resp.get('items', [])
-
-
-async def get_snapshots(ctx, reload_trigger):
-    """Query the existing snapshots from Google Cloud.
-
-    If the channel "reload_trigger" contains any value, we
-    refresh the list of snapshots. This will then cause the
-    next backup to be scheduled.
-    """
-    yield await load_snapshots(ctx)
-    async for _ in reload_trigger:
-        yield await load_snapshots(ctx)
-
-
-async def watch_schedule(ctx, trigger):
+async def watch_schedule(ctx, trigger, *, loop=None):
     """Continually yields the next backup to be created.
 
     It watches two input sources: the rules as defined by
@@ -206,6 +215,7 @@ async def watch_schedule(ctx, trigger):
     from Google Cloud. If either of them change, a new backup
     is scheduled.
     """
+    loop = loop or asyncio.get_event_loop()
     _log = _logger.new()
 
     rulesgen = get_rules(ctx)
@@ -218,6 +228,27 @@ async def watch_schedule(ctx, trigger):
         snapshots=snapgen,
         defaults={'snapshots': None, 'rules': None}
     )
+
+    rules = None
+
+    heartbeat_interval_seconds = ctx.config.get(
+        'schedule_heartbeat_interval_seconds'
+    )
+
+    async def heartbeat():
+        _logger.info(
+            events.Rule.HEARTBEAT,
+            rules=rules,
+        )
+
+        loop.call_later(
+            heartbeat_interval_seconds,
+            asyncio.ensure_future,
+            heartbeat()
+        )
+
+    if heartbeat_interval_seconds:
+        asyncio.ensure_future(heartbeat())
 
     async for item in combined:
         rules = item.get('rules')
@@ -235,131 +266,6 @@ async def watch_schedule(ctx, trigger):
             continue
 
         yield determine_next_snapshot(snapshots, rules)
-
-
-async def make_backup(ctx, rule):
-    """Execute a single backup job.
-
-    1. Create the snapshot
-    2. Wait until the snapshot is finished.
-    3. Expire old snapshots
-    """
-    snapshot_time_str = re.sub(
-        r'[^a-z0-9-]', '-',
-        pendulum.now('utc').format(ctx.config['snapshot_datetime_format']),
-        flags=re.IGNORECASE)
-    snapshot_name = f'{rule.pretty_name}-{snapshot_time_str}'
-
-    _log = _logger.new(
-        snapshot_name=snapshot_name,
-        rule=rule
-    )
-
-    gcloud = ctx.make_gclient()
-    labels = {
-        ctx.config['snapshot_author_label_key']:
-            ctx.config['snapshot_author_label']
-    }
-
-    request_body = {
-        'name': snapshot_name,
-        'labels': labels,
-    }
-    _log.debug('createSnapshot.request-body', body=request_body)
-
-    try:
-        _log.info(events.Snapshot.START, key_hints=['rule.name', 'snapshot_name'])
-
-        result = await run_in_executor(
-            gcloud.disks().createSnapshot(
-                disk=rule.gce_disk,
-                project=ctx.config['gcloud_project'],
-                zone=rule.gce_disk_zone,
-                body=request_body
-            ).execute
-        )
-    except Exception as exc:
-        _log.exception(events.Snapshot.ERROR)
-        raise errors.SnapshotCreateError('Call to API raised an error') from exc
-
-    _log = _log.bind(create_snapshot=result)
-
-    _log.debug('snapshot.started', key_hints=['create_snapshot.status'])
-
-    # Immediately after creating the snapshot, it sometimes seems to
-    # take some seconds before it can be queried.
-    await asyncio.sleep(10)
-
-    _log.debug('Waiting for snapshot to be ready')
-    while result['status'] in ('PENDING', 'UPLOADING', 'CREATING'):
-        await asyncio.sleep(2)
-        _log.debug('snapshot.status.poll')
-        result = await run_in_executor(
-            gcloud.snapshots().get(
-                snapshot=snapshot_name,
-                project=ctx.config['gcloud_project']
-            ).execute
-        )
-        _log.debug('snapshot.status.polled', result=result)
-
-    if not result['status'] == 'READY':
-        _log.error(events.Snapshot.ERROR, result=result)
-        return
-
-    _log.info(
-        events.Snapshot.CREATED,
-        last_result=result,
-        key_hints=['snapshot_name', 'rule.name'],
-    )
-
-    ping_url = ctx.config.get('ping_url')
-    if ping_url:
-        with aiohttp.ClientSession() as session:
-            response = await session.request('GET', ping_url)
-            _log.info(
-                events.Ping.SENT,
-                status=response.status,
-                url=ping_url,
-            )
-
-    await expire_snapshots(ctx, rule)
-
-
-async def expire_snapshots(ctx, rule: Rule):
-    """
-    Expire existing snapshots for the rule.
-    """
-    _log = _logger.new(
-        rule=rule,
-    )
-    _log.debug('Expiring existing snapshots')
-
-    snapshots = await load_snapshots(ctx)
-    snapshots = filter_snapshots_by_rule(snapshots, rule)
-    snapshots = {s['name']: pendulum.parse(s['creationTimestamp']) for s in snapshots}
-
-    to_keep = expire(snapshots, rule.deltas)
-    for snapshot_name in snapshots:
-        _log = _log.new(
-            snapshot_name=snapshot_name,
-        )
-        if snapshot_name in to_keep:
-            _log.debug('expire.keep')
-            continue
-
-        if snapshot_name not in to_keep:
-            _log.debug('snapshot.expiring')
-            result = await run_in_executor(
-                ctx.make_gclient().snapshots().delete(
-                    snapshot=snapshot_name,
-                    project=ctx.config['gcloud_project']
-                ).execute
-            )
-            _log.info(
-                events.Snapshot.EXPIRED,
-                key_hint='snapshot_name',
-                result=result
-            )
 
 
 async def scheduler(ctx, scheduling_chan, snapshot_reload_trigger):
@@ -399,6 +305,10 @@ async def backuper(ctx, scheduling_chan, snapshot_reload_trigger):
             else:
                 _log.debug(
                     'backuper.next-backup',
+                    key_hints=[
+                        'rule.name',
+                        'target_time',
+                    ],
                     rule=current_target_rule,
                     target_time=current_target_time,
                     diff=current_target_time.diff(),
