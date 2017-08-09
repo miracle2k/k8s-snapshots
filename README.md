@@ -22,10 +22,6 @@ How it works
    a Google Compute disk, it will create new snapshots, and delete
    existing snapshots, according to the deltas defined.
 
-  **WARNING**: The tool *will* consider snapshots not created by it.
-  It will consider, and potentially delete, every snapshot that is
-  associated with the disk in question.
-
 
 How do the deltas work
 ----------------------
