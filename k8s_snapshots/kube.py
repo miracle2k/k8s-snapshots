@@ -77,7 +77,7 @@ class Kubernetes:
         """
         Sync wrapper for :any:`pykube.query.Query().watch().object_stream()`
         """
-        return resource_type.objects(self.client_factory).watch().object_stream()
+        return resource_type.objects(self.client_factory()).watch().object_stream()
 
 
 def get_resource_or_none_sync(
@@ -133,11 +133,13 @@ async def watch_resources(
         loop=None
 ) -> AsyncGenerator[_WatchEvent, None]:
     """ Asynchronously watch Kubernetes resources """
-    return _watch_resources_thread_wrapper(
+    async_gen = _watch_resources_thread_wrapper(
         ctx.kube_client,
         resource_type,
         loop=loop
     )
+    async for item in async_gen:
+        yield item
 
 async def _watch_resources_thread_wrapper(
         client_factory: Callable[[], pykube.HTTPClient],
