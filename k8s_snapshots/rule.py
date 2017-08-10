@@ -5,7 +5,6 @@ import attr
 import isodate
 import pykube
 import structlog
-from tarsnapper.config import ConfigError
 
 from k8s_snapshots import kube
 from k8s_snapshots.context import Context
