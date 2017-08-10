@@ -69,8 +69,6 @@ def test_rule_from_volume_with_claim(
     ctx = Context({
         'deltas_annotation_key': deltas_annotation_key
     })
-    pv: pykube.objects.PersistentVolume
-    pvc: pykube.objects.PersistentVolumeClaim
 
     pv, pvc = make_volume_and_claim(
         ctx=ctx,

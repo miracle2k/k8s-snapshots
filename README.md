@@ -33,11 +33,13 @@ How do the deltas work
 The expiry logic of [tarsnapper](https://github.com/miracle2k/tarsnapper)
 is used.
 
-The generations are defined by a list of deltas. ``60s`` means a minute,
-``12h`` is half a day, ``7d`` is a week. The number of backups in each
-generation is implied by it's and the parent generation's delta.
+The generations are defined by a list of deltas formatted as [ISO 8601
+durations](https://en.wikipedia.org/wiki/ISO_8601#Durations) (this differs from
+tarsnapper). ``PT60S`` means a minute, ``PT12H`` is half a day, ``PT7D`` is a
+week. The number of backups in each generation is implied by it's and the parent
+generation's delta.
 
-For example, given the deltas ``1h 1d 7d``, the first generation will
+For example, given the deltas ``PT1H P1D P7D``, the first generation will
 consist of 24 backups each one hour older than the previous
 (or the closest approximation possible given the available backups),
 the second generation of 7 backups each one day older than the previous,
@@ -66,7 +68,7 @@ deltas annotation manually:
 
 Add an annotation such as:
 
-    backup.kubernetes.io/deltas: 1h 2d 30d 180d
+    backup.kubernetes.io/deltas: PT1H P2D P30D P180D
 
 
 Configuration

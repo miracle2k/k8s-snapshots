@@ -111,11 +111,15 @@ def rule_name_from_k8s_source(
     return rule_name
 
 
-def parse_deltas(delta_string):
+def parse_deltas(
+        delta_string: str
+) -> List[Union[timedelta, isodate.Duration]]:
     """q§Parse the given string into a list of ``timedelta`` instances.
     """
     if delta_string is None:
-        return None
+        raise DeltasParseError(
+            f'Delta string is None',
+        )
 
     deltas = []
     for item in delta_string.split(' '):
@@ -127,6 +131,7 @@ def parse_deltas(delta_string):
         except ValueError as exc:
             raise DeltasParseError(
                 f'Could not parse duration: {item!r}',
+                error=exc,
                 item=item,
                 deltas=deltas,
                 delta_string=delta_string,
