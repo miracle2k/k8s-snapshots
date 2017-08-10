@@ -85,5 +85,7 @@ class Context:
             'compute',
             version,
             credentials=credentials,
+            # https://github.com/google/google-api-python-client/issues/299#issuecomment-268915510
+            cache_discovery=False
         )
         return compute
