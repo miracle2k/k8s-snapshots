@@ -124,7 +124,7 @@ for more information.
 Configuration
 -------------
 
-# Configure access permissions to Google Cloud.
+### Configure access permissions to Google Cloud.
 
 If there are no default credentials to Kubernetes and the Cloud
 snapshot API, or the default credentials do not hae the required
@@ -158,7 +158,7 @@ access scope, you may need to configure these.
 </table>
 
 
-# Pinging a third party service
+### Pinging a third party service
 
 <table>
   <tr>
@@ -172,7 +172,7 @@ access scope, you may need to configure these.
 </table>
 
 
-# Make snapshot names more readable
+### Make snapshot names more readable
 
 If your persistent volumes are auto-provisioned by Kubernetes, then
 you'll end up with snapshot names such as
@@ -183,7 +183,7 @@ will instead use the name that you give to your
 ``PersistentVolumeClaim``.
 
 
-# Manual backups
+### Manual backups
 
 <table>
   <tr>
@@ -209,7 +209,7 @@ will instead use the name that you give to your
 </table>
 
 
-# Other environment variables
+### Other environment variables
 
 <table>
   <tr>
