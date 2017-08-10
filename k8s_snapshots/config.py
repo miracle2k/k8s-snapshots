@@ -15,8 +15,8 @@ _logger = structlog.get_logger()
 
 
 DEFAULT_CONFIG = {
-    #: Set to True to make logs more human-readable
-    'structlog_dev': False,
+    #: Set to True to make logs more machine-readable
+    'json_log': False,
     #: If zero, prints one line of JSON per message, if set to a positive
     #: non-zero integer to get indented JSON output
     'structlog_json_indent': 0,

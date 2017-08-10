@@ -205,6 +205,11 @@ access scope, you may need to configure these.
     <td>LOG_LEVEL</td>
     <td>**Default: INFO**. Possible values: DEBUG, INFO, WARNING, ERROR</td>
   </tr>
+  <tr>
+    <td>JSON_LOG</td>
+    <td>**Default: False**. Output the log messages as JSON objects for
+        easier processing.</td>
+  </tr>
 </table>
 
 

@@ -118,7 +118,7 @@ def add_message(logger, method_name, event_dict):
 def configure_from_config(config):
     configure_logging(
         level_name=config['log_level'],
-        for_humans=config['structlog_dev'],
+        for_humans=not config['json_log'],
         json_indent=config['structlog_json_indent'] or None,
     )
 
@@ -246,7 +246,7 @@ def add_func_name(logger, method_rame, event_dict):
 
 def order_keys(order):
     """
-    Order keys for JSON readability when not using structlog_dev=True
+    Order keys for JSON readability when not using json_log=True
     """
     def processor(logger, method_name, event_dict):
         if not isinstance(event_dict, OrderedDict):
