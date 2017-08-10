@@ -35,9 +35,9 @@ is used.
 
 The generations are defined by a list of deltas formatted as [ISO 8601
 durations](https://en.wikipedia.org/wiki/ISO_8601#Durations) (this differs from
-tarsnapper). ``PT60S`` means a minute, ``PT12H`` is half a day, ``PT7D`` is a
-week. The number of backups in each generation is implied by it's and the parent
-generation's delta.
+tarsnapper). ``PT60S`` or ``PT1M`` means a minute, ``PT12H`` or ``P0.5D`` is
+half a day, ``P1W`` or ``P7D`` is a week. The number of backups in each
+generation is implied by it's and the parent generation's delta.
 
 For example, given the deltas ``PT1H P1D P7D``, the first generation will
 consist of 24 backups each one hour older than the previous
