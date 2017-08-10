@@ -174,7 +174,8 @@ access scope, you may need to configure these.
 
 # Manual backups
 
-<tr>
+<table>
+  <tr>
     <td>VOLUMES</td>
     <td>
       Comma-separated list of volumes to backup. This allows you to
@@ -194,6 +195,7 @@ access scope, you may need to configure these.
       The zone for this volume.
     </td>
   </tr>
+</table>
 
 
 # Other environment variables
