@@ -41,6 +41,7 @@ class Rule(Loggable):
                 pykube.objects.PersistentVolume
             ],
             deltas: List[timedelta],
+            use_claim_name: bool=False
     ) -> 'Rule':
 
         gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
@@ -61,8 +62,14 @@ class Rule(Loggable):
             # Abuse the annotation error class.
             raise UnsupportedVolume('cannot find the zone of the disk')
 
+        claim_name = ""
+        if use_claim_name:
+            claim_ref = volume.obj['spec'].get('claimRef')
+            if claim_ref:
+                claim_name = claim_ref.get('name')
+
         return cls(
-            name=rule_name_from_k8s_source(source),
+            name=rule_name_from_k8s_source(source, claim_name),
             source=source.obj['metadata']['selfLink'],
             deltas=deltas,
             gce_disk=gce_disk,
@@ -78,7 +85,8 @@ def rule_name_from_k8s_source(
         source: Union[
             pykube.objects.PersistentVolumeClaim,
             pykube.objects.PersistentVolume
-        ]
+        ],
+        name: str = False
 ) -> str:
     short_kind = {
         'PersistentVolume': 'pv',
@@ -93,7 +101,9 @@ def rule_name_from_k8s_source(
     else:
         namespace = f'{source.namespace}-'
 
-    rule_name = f'{namespace}{short_kind}-{source.name}'
+    if not name:
+        name = source.name
+    rule_name = f'{namespace}{short_kind}-{name}'
 
     _logger.debug(
         'rule-name-from-k8s',
@@ -231,7 +241,8 @@ async def rule_from_pv(
     try:
         _log.debug('Checking volume for deltas')
         deltas = get_deltas(volume.annotations)
-        return Rule.from_volume(volume, source=volume, deltas=deltas)
+        return Rule.from_volume(volume, source=volume, deltas=deltas,
+            use_claim_name=use_claim_name)
     except AnnotationNotFound:
         if claim_ref is None:
             raise
@@ -252,7 +263,8 @@ async def rule_from_pv(
     try:
         _log.debug('Checking volume claim for deltas')
         deltas = get_deltas(volume_claim.annotations)
-        return Rule.from_volume(volume, source=volume_claim, deltas=deltas)
+        return Rule.from_volume(volume, source=volume_claim, deltas=deltas,
+            use_claim_name=use_claim_name)
     except AnnotationNotFound as exc:
         raise AnnotationNotFound(
             'No deltas found via volume claim'
