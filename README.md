@@ -172,6 +172,17 @@ access scope, you may need to configure these.
 </table>
 
 
+# Make snapshot names more readable
+
+If your persistent volumes are auto-provisioned by Kubernetes, then
+you'll end up with snapshot names such as
+``pv-pvc-01f74065-8fe9-11e6-abdd-42010af00148``. If you want that
+prettier, set the enviroment variable ``USE_CLAIM_NAME=true``. Instead
+of the auto-generated name of the persistent volume, *k8s-snapshots*
+will instead use the name that you give to your
+``PersistentVolumeClaim``.
+
+
 # Manual backups
 
 <table>
