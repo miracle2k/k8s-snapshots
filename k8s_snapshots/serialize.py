@@ -1,74 +1,57 @@
 from datetime import timedelta
-import json as _json
-from typing import Union, Dict
+import json
+from typing import (
+    TypeVar,
+    Mapping,
+    Sequence,
+    Optional, Callable)
 
 import isodate
 import pendulum
+from structlog.processors import _json_fallback_handler
 
-from k8s_snapshots.rule import Rule
+Serializable = TypeVar(
+    'Serializable',
+    int,
+    float,
+    str,
+    bool,
+    Mapping,
+    Sequence,
+)
 
-#: Marker object used to differentiate between "nothing" and None
-NOTHING = object()
-
-
-class UnhandledTypeError(TypeError):
-    pass
+_DEFAULT_FALLBACK_PROCESSOR = _json_fallback_handler
 
 
 def dumps(*args, **kwargs):
-    """
-    Convenience wrapper around json.dumps that uses SnapshotsJSONEncoder
-    by default.
-    """
-    kwargs.setdefault('cls', SnapshotsJSONEncoder)
-    return _json.dumps(*args, **kwargs)
+    kwargs['default'] = Processor()
+    return json.dumps(*args, **kwargs)
 
 
-def to_str(value: Union[timedelta, pendulum.Pendulum]) -> str:
-    if isinstance(value, timedelta):
-        return serialize_duration(value)
+class Processor:
+    def __init__(self, fallback_processor=_DEFAULT_FALLBACK_PROCESSOR):
+        self.fallback_processor = fallback_processor
 
-    if isinstance(value, pendulum.Pendulum):
-        return value.isoformat()
+    def __call__(self, obj):
+        return process(obj, fallback_processor=self.fallback_processor)
 
-    raise UnhandledTypeError(
-        f'Type {type(value)} can not be serialized to str()'
+
+def process(
+        obj,
+        fallback_processor: Optional[
+            Callable[..., Serializable]
+        ]=_DEFAULT_FALLBACK_PROCESSOR,
+) -> Serializable:
+    if isinstance(obj, timedelta):
+        return isodate.duration_isoformat(obj)
+
+    if isinstance(obj, pendulum.Pendulum):
+        return obj.isoformat()
+
+    if fallback_processor is not None:
+        return fallback_processor(obj)
+
+    raise TypeError(
+        f'Cannot process object of type {type(obj)}, no fallback_processor '
+        f'provided'
     )
-
-
-def to_dict(value: Union[Rule]) -> Dict:
-    if isinstance(value, Rule):
-        return value.to_dict()
-
-    raise UnhandledTypeError(
-        f'Type {type(value)} can not be serialized to dict()'
-    )
-
-
-def serialize_duration(td: timedelta) -> str:
-    return isodate.duration_isoformat(td)
-
-
-class SnapshotsJSONEncoder(_json.JSONEncoder):
-    def __init__(self, *args, **kwargs):
-        # We need to intercept the default=_json_fallback_encoder that
-        # structlog.processors.JSONRenderer passes to json.dumps in order to
-        # have our own .default()
-        self._default_handler = kwargs.pop('default', None)
-        super(SnapshotsJSONEncoder, self).__init__(*args, **kwargs)
-
-    def default(self, obj):
-        try:
-            return to_str(obj)
-        except UnhandledTypeError:
-            pass
-
-        try:
-            return to_dict(obj)
-        except UnhandledTypeError:
-            pass
-
-        if self._default_handler is not None:
-            return self._default_handler(obj)
-        else:
-            return super(SnapshotsJSONEncoder, self).default(obj)

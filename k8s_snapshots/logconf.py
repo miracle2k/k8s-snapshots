@@ -1,10 +1,12 @@
+import logging
+import logging.config
 from collections import OrderedDict
 from typing import Optional, List, Any, Dict
 
-import logbook
 import structlog
+import sys
 
-from k8s_snapshots.serialize import SnapshotsJSONEncoder
+from k8s_snapshots import serialize
 
 
 class ProcessStructuredErrors:
@@ -74,7 +76,7 @@ def add_message(logger, method_name, event_dict):
 
         value = path_value(ed, key_hint)
 
-        return f'{key_hint}={value!r}'
+        return format_kv(key_hint, value)
 
     def from_key_hints(ed) -> List[str]:
         key_hints = ed.pop('key_hints', None)
@@ -82,9 +84,12 @@ def add_message(logger, method_name, event_dict):
             return []
 
         return [
-            f'{key_hint}={path_value(ed, key_hint)!r}'
+            format_kv(key_hint, path_value(ed, key_hint))
             for key_hint in key_hints
         ]
+
+    def format_kv(key: str, value: Any) -> str:
+        return f'{key}={serialize.process(value)}'
 
     hints = [
         from_hint(event_dict),
@@ -123,7 +128,6 @@ def configure_logging(
         for_humans: bool=False,
         json_indent: Optional[int]=None,
 ):
-    configure_logbook(level_name)
     configure_structlog(
         for_humans=for_humans,
         json_indent=json_indent,
@@ -131,126 +135,138 @@ def configure_logging(
     )
 
 
-def configure_logbook(
-        level_name: str
-):
-    level = logbook.lookup_level(level_name)
-    handler = logbook.StderrHandler(
-        level=level,
-        format_string='{record.message}')
-
-    handler.push_application()
-
-
 def configure_structlog(
         for_humans: bool=False,
         json_indent: Optional[int]=None,
         level_name: str='INFO'
 ):
-    level = logbook.lookup_level(level_name)
-
-    def logger_factory(name=None):
-        from structlog._frames import _find_first_app_frame_and_name
-
-        if name is None:
-            _, name = _find_first_app_frame_and_name(
-                additional_ignores=[
-                    f'{__package__}.logconf',
-                ]
-            )
-
-        return logbook.Logger(name, level=level)
-
-    def add_severity(logger, method_name, event_dict):
-        if method_name == 'warn':
-            method_name = 'warning'
-
-        event_dict['severity'] = method_name.upper()
-        return event_dict
-
-    def add_func_name(logger, method_rame, event_dict):
-        record = event_dict.get('_record')
-        if record is None:
-            return event_dict
-
-        event_dict['function'] = record.funcName
-
-        return event_dict
-
-    def order_keys(order):
-        """
-        Order keys for JSON readability when not using structlog_dev=True
-        """
-        def processor(logger, method_name, event_dict):
-            if not isinstance(event_dict, OrderedDict):
-                return event_dict
-
-            for key in reversed(order):
-                if key in event_dict:
-                    event_dict.move_to_end(key, last=False)
-
-            return event_dict
-        return processor
-
-    def event_enum_to_str(logger, method_name, event_dict):
-        from k8s_snapshots import events
-        event = event_dict.get('event')
-        if event is None:
-            return event_dict
-
-        if isinstance(event, events.EventEnum):
-            event_dict['snapshot_event'] = event
-            event_dict['event'] = event.value
-
-        return event_dict
-
     key_order = ['message', 'event', 'level']
+    timestamper = structlog.processors.TimeStamper(fmt='ISO')
+
+    processors = [
+        event_enum_to_str,
+        ProcessStructuredErrors(),
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        rename_level_to_severity,
+        timestamper,
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        add_func_name,
+        add_message,
+        #order_keys(key_order),
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ]
 
     if for_humans:
-        structlog.configure(
-            processors=[
-                event_enum_to_str,
-                ProcessStructuredErrors(),
-                structlog.stdlib.add_logger_name,
-                structlog.stdlib.add_log_level,
-                structlog.stdlib.PositionalArgumentsFormatter(),
-                structlog.processors.TimeStamper(fmt='ISO'),
-                structlog.processors.StackInfoRenderer(),
-                structlog.processors.format_exc_info,
-                add_func_name,
-                add_message,
-                order_keys(key_order),
-                structlog.dev.ConsoleRenderer()  # <===
-            ],
-            context_class=OrderedDict,
-            logger_factory=logger_factory,
-            wrapper_class=structlog.BoundLogger,
-            cache_logger_on_first_use=True,
-        )
+        renderer = structlog.dev.ConsoleRenderer()  # <===
     else:
         # Make it so that 0 ⇒ None
         indent = json_indent or None
-        structlog.configure(
-            processors=[
-                event_enum_to_str,
-                add_severity,
-                ProcessStructuredErrors(),
-                structlog.stdlib.add_logger_name,
-                structlog.processors.TimeStamper(fmt='ISO'),
-                structlog.processors.StackInfoRenderer(),
-                structlog.processors.format_exc_info,
-                add_func_name,
-                add_message,
-                order_keys(key_order),
-                structlog.processors.JSONRenderer(
-                    indent=indent,
-                    cls=SnapshotsJSONEncoder,
-                )
-            ],
-            context_class=OrderedDict,
-            wrapper_class=structlog.BoundLogger,
-            logger_factory=logger_factory,
-            cache_logger_on_first_use=True,
+        renderer = structlog.processors.JSONRenderer(
+            indent=indent,
+            serializer=serialize.dumps
         )
 
+    foreign_pre_chain = [
+        # Add the log level and a timestamp to the event_dict if the log entry
+        # is not from structlog.
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        foreign_event_to_message,
+        rename_level_to_severity,
+        timestamper,
+    ]
 
+    logging.config.dictConfig({
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'structlog': {
+                '()': structlog.stdlib.ProcessorFormatter,
+                'processor': renderer,
+                'foreign_pre_chain': foreign_pre_chain,
+            },
+        },
+        'handlers': {
+            'default': {
+                'level': level_name,
+                'class': 'logging.StreamHandler',
+                'stream': sys.stdout,
+                'formatter': 'structlog',
+            },
+        },
+        'loggers': {
+            '': {
+                'handlers': ['default'],
+                'level': 'DEBUG',
+                'propagate': True,
+            },
+        }
+    })
+
+    structlog.configure(
+        processors=processors,
+        context_class=OrderedDict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+
+def foreign_event_to_message(logger, method_name, event_dict):
+    event = event_dict.get('event')
+
+    if event is not None and 'message' not in event_dict:
+        event_dict['message'] = event
+        event_dict['event'] = 'foreign'
+
+    return event_dict
+
+
+def rename_level_to_severity(logger, method_name, event_dict):
+    level = event_dict.pop('level', None)
+
+    event_dict['severity'] = level.upper()
+
+    return event_dict
+
+
+def add_func_name(logger, method_rame, event_dict):
+    record = event_dict.get('_record')
+    if record is None:
+        return event_dict
+
+    event_dict['function'] = record.funcName
+
+    return event_dict
+
+
+def order_keys(order):
+    """
+    Order keys for JSON readability when not using structlog_dev=True
+    """
+    def processor(logger, method_name, event_dict):
+        if not isinstance(event_dict, OrderedDict):
+            return event_dict
+
+        for key in reversed(order):
+            if key in event_dict:
+                event_dict.move_to_end(key, last=False)
+
+        return event_dict
+    return processor
+
+
+def event_enum_to_str(logger, method_name, event_dict):
+    from k8s_snapshots import events
+    event = event_dict.get('event')
+    if event is None:
+        return event_dict
+
+    if isinstance(event, events.EventEnum):
+        event_dict['event'] = event.value
+
+    return event_dict
