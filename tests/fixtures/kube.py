@@ -175,6 +175,11 @@ class MockKubernetes(kube.Kubernetes):
     @contextlib.contextmanager
     def patch(cls, resources: Iterable[kube.Resource]):
         try:
+            _logger.debug(
+                'MockKubernetes.patch',
+                message='Patching Kubernetes',
+                resources=resources
+            )
             for resource in resources:
                 cls.add_resource(resource)
 
@@ -185,6 +190,10 @@ class MockKubernetes(kube.Kubernetes):
             with patch_kubernetes:
                 yield
         finally:
+            _logger.debug(
+                'MockKubernetes.patch',
+                message='Cleaning up after patch'
+            )
             cls.resource_map.clear()
 
 
@@ -213,7 +222,7 @@ def make_resource(
         namespace=DEFAULT,
         labels=DEFAULT,
         annotations=DEFAULT,
-        resource_spec=DEFAULT,
+        spec=DEFAULT,
 ) -> kube.Resource:
     """
     Create a Kubernetes Resource.
@@ -230,8 +239,8 @@ def make_resource(
         config=Mock()
     )
 
-    if resource_spec is DEFAULT:
-        resource_spec = {}
+    if spec is DEFAULT:
+        spec = {}
 
     obj = {
         'metadata': {
@@ -239,7 +248,7 @@ def make_resource(
             'annotations': annotations,
             'selfLink': f'test/{namespace}/{resource_type.endpoint}/{name}'
         },
-        'spec': resource_spec,
+        'spec': spec,
     }
 
     if labels is not DEFAULT:
@@ -258,7 +267,10 @@ def make_volume_and_claim(
         claim_annotations=DEFAULT,
         claim_namespace=DEFAULT,
         volume_zone_label=DEFAULT,
-) -> Tuple[kube.Resource, kube.Resource]:
+) -> Tuple[
+    pykube.objects.PersistentVolume,
+    pykube.objects.PersistentVolumeClaim
+]:
     """
     Creates
 
@@ -271,7 +283,7 @@ def make_volume_and_claim(
         volume_name,
         annotations=volume_annotations,
         labels=volume_zone_label,
-        resource_spec={
+        spec={
             'claimRef': {
                 'name': claim_name,
                 'namespace': claim_namespace,
@@ -287,7 +299,7 @@ def make_volume_and_claim(
         claim_name,
         annotations=claim_annotations,
         namespace=claim_namespace,
-        resource_spec={
+        spec={
             'volumeName': volume_name,
         }
     )
@@ -311,4 +323,12 @@ def fx_annotation_deltas(request):
     context = request.getfixturevalue('fx_context')
     return {
         context.config['deltas_annotation_key']: deltas
+    }
+
+
+def spec_gce_persistent_disk(pd_name):
+    return {
+        'gcePersistentDisk': {
+            'pdName': pd_name
+        }
     }

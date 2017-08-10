@@ -1,4 +1,5 @@
 import asyncio
+from typing import Dict, Optional, Any
 
 import pykube
 import pytest
@@ -6,14 +7,15 @@ import pytest
 from k8s_snapshots import errors
 from k8s_snapshots.context import Context
 from k8s_snapshots.core import volume_from_resource
-from k8s_snapshots.rule import rule_from_pv
+from k8s_snapshots.rule import rule_from_pv, Rule, parse_deltas
 from tests.fixtures.kube import (
     mock_kube,
     make_volume_and_claim,
     ANNOTATION_PROVISIONED_BY,
     make_resource,
-    LABEL_ZONE
-)
+    LABEL_ZONE,
+    spec_gce_persistent_disk)
+
 
 @pytest.mark.parametrize(
     ['deltas_annotation_key'],
@@ -67,6 +69,9 @@ def test_rule_from_volume_with_claim(
     ctx = Context({
         'deltas_annotation_key': deltas_annotation_key
     })
+    pv: pykube.objects.PersistentVolume
+    pvc: pykube.objects.PersistentVolumeClaim
+
     pv, pvc = make_volume_and_claim(
         ctx=ctx,
         volume_annotations=provisioner_annotation,
@@ -75,6 +80,11 @@ def test_rule_from_volume_with_claim(
         },
         volume_zone_label=volume_zone_label,
     )
+
+    if pvc.namespace and not pvc.namespace == 'default':
+        expected_rule_name = f'pvc-{pvc.namespace}-{pvc.name}'
+    else:
+        expected_rule_name = f'pvc-{pvc.name}'
 
     loop = asyncio.get_event_loop()
     with mock_kube([pv, pvc]) as _mocked:
@@ -88,6 +98,84 @@ def test_rule_from_volume_with_claim(
         )
         assert rule.source == pvc.obj['metadata']['selfLink']
         assert deltas_annotation_key in pvc.annotations
+        assert rule.name == expected_rule_name
+        assert rule.deltas == parse_deltas(fx_deltas)
+
+
+@pytest.mark.parametrize(
+    [
+        'label_zone',
+        'annotation_provisioned_by',
+        '_spec_gce_persistent_disk',
+    ],
+    [
+        pytest.param(
+            LABEL_ZONE,
+            ANNOTATION_PROVISIONED_BY,
+            spec_gce_persistent_disk('test-pd'),
+            id='valid'
+        ),
+        pytest.param(
+            LABEL_ZONE,
+            None,
+            spec_gce_persistent_disk('test-pd'),
+            id='missing_annotation_provisioned_by',
+            marks=pytest.mark.xfail(
+                reason='Missing provisioned-by annotation',
+                raises=errors.UnsupportedVolume,
+                strict=True
+            )
+        )
+    ]
+)
+def test_rule_from_volume(
+        fx_context: Context,
+        fx_deltas: str,
+        label_zone: Optional[Dict[str, str]],
+        annotation_provisioned_by: Optional[Dict[str, str]],
+        _spec_gce_persistent_disk: Optional[Dict[str, Any]]
+):
+    annotations = {}
+
+    annotations.update({
+        fx_context.config['deltas_annotation_key']: fx_deltas,
+    })
+
+    if annotation_provisioned_by is not None:
+        annotations.update(annotation_provisioned_by)
+
+    labels = {}
+
+    if label_zone is not None:
+        labels.update(label_zone)
+
+    spec = {}
+
+    if _spec_gce_persistent_disk is not None:
+        spec.update(_spec_gce_persistent_disk)
+
+    source_pv = make_resource(
+        pykube.objects.PersistentVolume,
+        'source-pv',
+        annotations=annotations,
+        labels=labels,
+        spec=spec,
+    )
+
+    expected_rule_name = f'pv-{source_pv.name}'
+
+    loop = asyncio.get_event_loop()
+
+    with mock_kube([source_pv]):
+        rule: Rule = loop.run_until_complete(
+            rule_from_pv(
+                fx_context,
+                source_pv,
+                fx_context.config['deltas_annotation_key']
+            )
+        )
+        assert rule.name == expected_rule_name
+        assert rule.deltas == parse_deltas(fx_deltas)
 
 
 @pytest.mark.parametrize(
@@ -105,7 +193,7 @@ def test_rule_name_from_pvc(fx_context, claim_namespace):
         'source-pv',
         annotations=ANNOTATION_PROVISIONED_BY,
         labels=LABEL_ZONE,
-        resource_spec={
+        spec={
             'claimRef': {
                 'name': claim_name,
                 'namespace': claim_namespace,
@@ -163,7 +251,7 @@ def test_rule_name_from_pv(
         volume_name,
         annotations=annotations,
         labels=fx_volume_zone_label,
-        resource_spec={
+        spec={
             'gcePersistentDisk': {
                 'pdName': 'source-pd'
             }
