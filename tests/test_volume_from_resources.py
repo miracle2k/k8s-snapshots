@@ -31,7 +31,7 @@ PV_RESOURCE = make_resource(
             make_resource(
                 pykube.objects.PersistentVolumeClaim,
                 'test-pvc',
-                resource_spec={
+                spec={
                     'volumeName': 'correct-pv'
                 }
             ),
@@ -52,7 +52,7 @@ PV_RESOURCE = make_resource(
             make_resource(
                 pykube.objects.PersistentVolumeClaim,
                 'test-pvc',
-                resource_spec={
+                spec={
                     'volumeName': 'nonexistent-pv'
                 }
             ),
@@ -75,7 +75,6 @@ PV_RESOURCE = make_resource(
             make_resource(
                 pykube.objects.PersistentVolumeClaim,
                 'claim-without-spec-volumename',
-                resource_spec={},
             ),
             [],
             None,
@@ -90,7 +89,7 @@ PV_RESOURCE = make_resource(
             make_resource(
                 pykube.objects.Deployment,
                 'a-deployment-is-not-a-volume',
-                resource_spec={
+                spec={
                     'volumeName': 'test-pv'
                 }
             ),
