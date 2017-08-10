@@ -14,6 +14,12 @@ IMPORTANT BREAKING CHANGES
   Thus, when you upgrade, all existing snapshots will be invisible to
   *k8s-snapshots*, and it will begin with a blank slate.
 
+  We recommend that within the Google Cloud UI, you add the label to
+  your existing snapshots you want the tool to consider. The label
+  expected is:
+
+  created-by=k8s-snapshots
+
 - The format used to define deltas has changed. It now uses ISO 8601
   durations, so the annotation string will look like this:
 
