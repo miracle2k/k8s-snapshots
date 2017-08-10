@@ -1,34 +1,22 @@
 import asyncio
+import inspect
 from datetime import timedelta
-from typing import Optional, Dict, Tuple, List, Iterable
+from typing import Optional, Dict, Tuple, List, Iterable, Callable, Union, \
+    Awaitable, Container
 
 import aiohttp
 import pendulum
 import re
 import structlog
-from googleapiclient.discovery import Resource
+from googleapiclient.discovery import Resource as GoogleResource
 from tarsnapper.expire import expire
 
-from k8s_snapshots import events, errors
+from k8s_snapshots import events, errors, serialize
 from k8s_snapshots.asyncutils import run_in_executor
 from k8s_snapshots.context import Context
 from k8s_snapshots.rule import Rule
 
 _logger = structlog.get_logger(__name__)
-
-
-async def get_snapshot(
-        ctx: Context,
-        snapshot_name: str,
-        gcloud: Optional[Resource]=None,
-) -> Dict:
-    gcloud = gcloud or ctx.gcloud()
-    return await run_in_executor(
-        gcloud.snapshots().get(
-            snapshot=snapshot_name,
-            project=ctx.config['gcloud_project']
-        ).execute
-    )
 
 
 async def expire_snapshots(ctx, rule: Rule):
@@ -96,28 +84,50 @@ async def make_backup(ctx, rule):
         rule=rule
     )
 
-    gcloud = ctx.gcloud()
-
-    request_body = {
-        'name': snapshot_name,
-    }
-    _log.debug('createSnapshot.request-body', body=request_body)
-
     try:
-        _log.info(
-            events.Snapshot.START,
-            key_hints=['snapshot_name', 'rule.name'],
-            request=request_body,
+
+        # Returns a ZoneOperation: {kind: 'compute#operation',
+        # operationType: 'createSnapshot', ...}.
+        # Google's documentation is confusing regarding this, since there's two
+        # tables of payload parameter descriptions on the page, one of them
+        # describes the input parameters, but contains output-only parameters,
+        # the correct table can be found at
+        # https://cloud.google.com/compute/docs/reference/latest/disks/createSnapshot#response
+        # snapshot_operation = await run_in_executor(
+        #     gcloud.disks().createSnapshot(
+        #         disk=rule.gce_disk,
+        #         project=ctx.config['gcloud_project'],
+        #         zone=rule.gce_disk_zone,
+        #         body=request_body
+        #     ).execute
+        # )
+        snapshot_operation = await create_snapshot(
+            ctx,
+            rule.gce_disk,
+            rule.gce_disk_zone,
+            snapshot_name,
+            snapshot_description=serialize.dumps(rule),
         )
 
-        create_snapshot_op = await run_in_executor(
-            gcloud.disks().createSnapshot(
-                disk=rule.gce_disk,
-                project=ctx.config['gcloud_project'],
-                zone=rule.gce_disk_zone,
-                body=request_body
-            ).execute
+        _log.debug(
+            'snapshot.operation-started',
+            key_hints=['create_snapshot_operation.status'],
+            snapshot_operation=snapshot_operation
         )
+
+        # Wait for the createSnapshot operation to leave the 'PENDING' and
+        # 'RUNNING' states.
+        # A ZoneOperation can have a state of 'PENDING', 'RUNNING', or 'DONE'
+        snapshot_operation = await poll_for_status(
+            snapshot_operation,
+            lambda: get_zone_operation(
+                ctx,
+                rule.gce_disk_zone,
+                snapshot_operation['name']
+            ),
+            retry_for=('PENDING', 'RUNNING')
+        )
+
     except Exception as exc:
         _log.exception(
             events.Snapshot.ERROR,
@@ -127,29 +137,28 @@ async def make_backup(ctx, rule):
             'Error creating snapshot'
         ) from exc
 
-    _log = _log.bind(create_snapshot_operation=create_snapshot_op)
+    if not snapshot_operation['status'] == 'DONE':
+        raise errors.SnapshotCreateError(
+            f'Unexpected ZoneOperation status: {snapshot_operation["status"]} '
+            f'expected "DONE"',
+            snapshot_operation=snapshot_operation,
+        )
 
-    _log.debug('snapshot.started', key_hints=['create_snapshot_operation.status'])
-
-    # Immediately after creating the snapshot, it sometimes seems to
-    # take some seconds before it can be queried.
-    await asyncio.sleep(10)
-
-    snapshot = await get_snapshot(ctx, snapshot_name, gcloud=gcloud)
+    snapshot = await get_snapshot(ctx, snapshot_name)
 
     await set_snapshot_labels(
         ctx,
         snapshot,
         snapshot_labels(ctx),
-        gcloud=gcloud
     )
 
     _log.debug('Waiting for snapshot to be ready')
-    while snapshot['status'] in ('PENDING', 'UPLOADING', 'CREATING'):
-        await asyncio.sleep(2)
-        _log.debug('snapshot.status.poll')
-        snapshot = await get_snapshot(ctx, snapshot_name, gcloud=gcloud)
-        _log.debug('snapshot.status.polled', snapshot=snapshot)
+
+    snapshot = await poll_for_status(
+        snapshot,
+        lambda: get_snapshot(ctx, snapshot_name),
+        retry_for=('CREATING', 'UPLOADING'),
+    )
 
     if not snapshot['status'] == 'READY':
         _log.error(
@@ -178,6 +187,122 @@ async def make_backup(ctx, rule):
     await expire_snapshots(ctx, rule)
 
 
+async def create_snapshot(
+        ctx: Context,
+        disk_name: str,
+        disk_zone: str,
+        snapshot_name: str,
+        snapshot_description: str,
+        *,
+        gcloud: Optional[GoogleResource]=None
+) -> Dict:
+    gcloud = gcloud or ctx.gcloud()
+    _log = _logger.new(
+        disk_name=disk_name,
+        disk_zone=disk_zone,
+        snapshot_name=snapshot_name,
+        snapshot_description=snapshot_description
+    )
+
+    request_body = {
+        'name': snapshot_name,
+        'description': snapshot_description
+    }
+    # TODO
+    _log.info(
+        events.Snapshot.START,
+        key_hints=['snapshot_name', 'rule.name'],
+        request=request_body,
+    )
+    return await run_in_executor(
+        gcloud.disks().createSnapshot(
+            disk=disk_name,
+            project=ctx.config['gcloud_project'],
+            zone=disk_zone,
+            body=request_body
+        ).execute
+    )
+
+
+async def poll_for_status(
+        resource: Dict,
+        refresh_func: Callable[..., Union[Dict, Awaitable[Dict]]],
+        retry_for: Container[str],
+        status_key: str='status',
+        sleep_time: int=1,
+):
+    """
+    Refreshes a resource using ``refresh_func`` until ``resource[status_key]`
+    is not one of the values in ``retry_for``.
+
+    Parameters
+    ----------
+    resource
+        The initial version of the resource, if ``resource[status_key]``
+        already is `not in` ``retry_for``, this method will return the resource
+        as-is without polling.
+    refresh_func
+        Callable that returns either
+
+        -   The new version of the resource.
+        -   An awaitable for the new version of the resource.
+    retry_for
+        A list of statuses to retry for.
+    status_key
+    sleep_time
+        The time, in seconds, to sleep for between calls.
+
+    Returns
+    -------
+
+    """
+    _log = _logger.new(
+        status_key=status_key
+    )
+    refresh_count = 0
+    time_start = pendulum.now()
+
+    while resource[status_key] in retry_for:
+        await asyncio.sleep(sleep_time)  # Sleep first
+
+        resource = refresh_func()
+        # If refresh_func returned an awaitable, await it
+        if inspect.isawaitable(resource):
+            _log.debug(
+                'poll-for-status.awaiting-resource',
+            )
+            resource = await resource
+
+        refresh_count += 1
+
+        _log.debug(
+            'poll-for-status.refreshed',
+            key_hints=[
+                'initial_resource.selfLink',
+                f'resource.{status_key}'
+            ],
+            resource=resource,
+            refresh_count=refresh_count
+        )
+
+    time_taken = pendulum.now() - time_start
+
+    _log.debug(
+        'poll-for-status.done',
+        key_hints=[
+            f'resource.{status_key}',
+            'refresh_count',
+            'time_taken',
+        ],
+        resource=resource,
+        time_taken=time_taken,
+        refresh_count=refresh_count,
+        time_start=time_start,
+    )
+
+    return resource
+
+
 def snapshot_author_label(ctx: Context) -> Tuple[str, str]:
     return (
         ctx.config['snapshot_author_label_key'],
@@ -193,10 +318,10 @@ async def set_snapshot_labels(
         ctx: Context,
         snapshot: Dict,
         labels: Dict,
-        gcloud: Optional[Resource]=None,
+        gcloud: Optional[GoogleResource]=None,
 ):
     _log = _logger.new(
-        snapshot=snapshot,
+        snapshot_name=snapshot['name'],
         labels=labels,
     )
     gcloud = gcloud or ctx.gcloud()
@@ -236,6 +361,38 @@ def new_snapshot_name(ctx: Context, rule: Rule) -> str:
     name_truncated = rule.name[:63 - len(suffix)]
 
     return f'{name_truncated}{suffix}'
+
+
+async def get_zone_operation(
+        ctx: Context,
+        zone: str,
+        operation_name: str,
+        *,
+        gcloud: Optional[GoogleResource]=None
+):
+    gcloud = gcloud or ctx.gcloud()
+    return await run_in_executor(
+        gcloud.zoneOperations().get(
+            project=ctx.config['gcloud_project'],
+            zone=zone,
+            operation=operation_name
+        ).execute
+    )
+
+
+async def get_snapshot(
+        ctx: Context,
+        snapshot_name: str,
+        *,
+        gcloud: Optional[GoogleResource]=None
+) -> Dict:
+    gcloud = gcloud or ctx.gcloud()
+    return await run_in_executor(
+        gcloud.snapshots().get(
+            snapshot=snapshot_name,
+            project=ctx.config['gcloud_project']
+        ).execute
+    )
 
 
 async def get_snapshots(ctx, reload_trigger):
