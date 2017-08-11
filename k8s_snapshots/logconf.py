@@ -154,7 +154,7 @@ def configure_structlog(
         structlog.processors.format_exc_info,
         add_func_name,
         add_message,
-        #order_keys(key_order),
+        order_keys(key_order),
         structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
     ]
 
@@ -180,7 +180,12 @@ def configure_structlog(
         timestamper,
     ]
 
-    logging.config.dictConfig({
+    if level_name == 'DEBUG':
+        root_logger_level = 'DEBUG'
+    else:
+        root_logger_level = 'ERROR'
+
+    logging_config = {
         'version': 1,
         'disable_existing_loggers': False,
         'formatters': {
@@ -201,11 +206,16 @@ def configure_structlog(
         'loggers': {
             '': {
                 'handlers': ['default'],
-                'level': 'DEBUG',
+                'level': root_logger_level,
                 'propagate': True,
             },
+            'k8s_snapshots': {
+                'level': 'DEBUG',
+            }
         }
-    })
+    }
+
+    logging.config.dictConfig(logging_config)
 
     structlog.configure(
         processors=processors,
