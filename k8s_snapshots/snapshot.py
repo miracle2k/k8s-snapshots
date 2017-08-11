@@ -85,7 +85,6 @@ async def make_backup(ctx, rule):
     )
 
     try:
-
         # Returns a ZoneOperation: {kind: 'compute#operation',
         # operationType: 'createSnapshot', ...}.
         # Google's documentation is confusing regarding this, since there's two
@@ -111,7 +110,11 @@ async def make_backup(ctx, rule):
 
         _log.debug(
             'snapshot.operation-started',
-            key_hints=['create_snapshot_operation.status'],
+            key_hints=[
+                'snapshot_name',
+                'snapshot_operation.name',
+                'snapshot_operation.status',
+            ],
             snapshot_operation=snapshot_operation
         )
 
@@ -290,6 +293,7 @@ async def poll_for_status(
     _log.debug(
         'poll-for-status.done',
         key_hints=[
+            'resource.name',
             f'resource.{status_key}',
             'refresh_count',
             'time_taken',
