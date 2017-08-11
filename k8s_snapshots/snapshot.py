@@ -167,7 +167,7 @@ async def make_backup(ctx, rule):
         _log.error(
             events.Snapshot.ERROR,
             snapshot=snapshot,
-            key_hints=['snapshot_name', 'rule.name'],
+            key_hints=['snapshot_name'],
         )
         return
 
@@ -211,7 +211,6 @@ async def create_snapshot(
         'name': snapshot_name,
         'description': snapshot_description
     }
-    # TODO
     _log.info(
         events.Snapshot.START,
         key_hints=['snapshot_name', 'rule.name'],
