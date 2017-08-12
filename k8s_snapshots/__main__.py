@@ -12,9 +12,11 @@ from k8s_snapshots.core import daemon
 
 
 def main():
-    config = k8s_snapshots.config.from_environ()
+    # Read config initially just to setup logging
+    configure_from_config(k8s_snapshots.config.from_environ_basic())
 
-    configure_from_config(config)
+    # Now with logging setup, read and validate the config.
+    config = k8s_snapshots.config.from_environ()
 
     if config['debug']:
         sys.excepthook = debug_excepthook

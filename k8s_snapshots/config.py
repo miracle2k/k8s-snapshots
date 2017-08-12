@@ -121,9 +121,14 @@ def validate_config(config: Dict) -> bool:
     return is_valid
 
 
-def from_environ() -> Dict:
+def from_environ_basic() -> Dict:
     config = DEFAULT_CONFIG.copy()
     config.update(confcollect.from_environ(by_defaults=DEFAULT_CONFIG))
+    return config
+
+
+def from_environ() -> Dict:
+    config = from_environ_basic()
 
     # Read manual volume definitions
     try:
