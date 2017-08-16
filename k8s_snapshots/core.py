@@ -96,8 +96,8 @@ async def rules_from_volumes(ctx):
     _logger.debug('volume-events.watch')
 
     merged_stream = stream.merge(
-        watch_resources(ctx, pykube.objects.PersistentVolume),
-        watch_resources(ctx, pykube.objects.PersistentVolumeClaim)
+        watch_resources(ctx, pykube.objects.PersistentVolume, delay=0),
+        watch_resources(ctx, pykube.objects.PersistentVolumeClaim, delay=2)
     )
 
     async with merged_stream.stream() as merged_events:

@@ -130,6 +130,7 @@ async def watch_resources(
         ctx: Context,
         resource_type: type(Resource),
         *,
+        delay: int,
         loop=None
 ) -> AsyncGenerator[_WatchEvent, None]:
     """ Asynchronously watch Kubernetes resources """
@@ -138,6 +139,11 @@ async def watch_resources(
         resource_type,
         loop=loop
     )
+
+    # Workaround a race condition in pykube:
+    # https: // github.com / kelproject / pykube / issues / 138
+    await asyncio.sleep(delay)
+
     async for item in async_gen:
         yield item
 
