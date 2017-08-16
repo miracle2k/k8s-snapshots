@@ -14,14 +14,16 @@ async def watch_resources(
     loop = loop or asyncio.get_event_loop()
     channel = Channel()
 
-    #await asyncio.sleep(timeout)
-
     def worker():
         try:
             client_factory = ctx.kube_client
-            api = client_factory()
-            sync_iterator = resource_type.objects(
-                api).watch().object_stream()
+
+            # This works:
+            #api = client_factory()
+            #sync_iterator = resource_type.objects(api).watch().object_stream()
+
+            # But this will watch the same resource twice:
+            sync_iterator = resource_type.objects(client_factory()).watch().object_stream()
 
             for event in sync_iterator:
                 print('got an event', event, resource_type)
