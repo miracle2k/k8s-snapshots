@@ -1,3 +1,11 @@
+1.0.1 (2017-08-16)
+------------------
+
+- Fix manual volume support via VOLUMES.
+- Fix race condition that caused PersistentVolume resources not be be
+  watched.
+
+
 1.0 (2017-08-10)
 ----------------
 
