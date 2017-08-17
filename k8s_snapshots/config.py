@@ -175,7 +175,7 @@ def read_volume_config() -> Dict:
             name=name,
             deltas=parse_deltas(deltas_str),
             gce_disk=name,
-            gce_disk_zone=zone,
+            gce_disk_zone=zone
         )
 
         _log.info(events.Rule.ADDED_FROM_CONFIG, rule=rule)

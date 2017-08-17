@@ -4,6 +4,7 @@ from typing import List, Dict
 from googleapiclient import discovery
 from oauth2client.service_account import ServiceAccountCredentials
 from oauth2client.client import GoogleCredentials
+import pykube.objects
 import structlog
 from k8s_snapshots.context import Context
 from .abstract import Snapshot, SnapshotStatus, DiskIdentifier, NewSnapshotIdentifier
@@ -19,6 +20,11 @@ def validate_config(config):
     """
 
     pass
+
+
+def supports_volume(volume: pykube.objects.PersistentVolume):
+    provisioner = volume.annotations.get('pv.kubernetes.io/provisioned-by')
+    return provisioner == 'kubernetes.io/gce-pd'
 
 
 def parse_timestamp(date_str: str) -> pendulum.Pendulum:

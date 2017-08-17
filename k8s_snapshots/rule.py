@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Dict, Any, Optional, List, Union, Iterable
+from typing import Dict, Any, List, Union, Iterable
 
 import attr
 import isodate
@@ -15,6 +15,7 @@ from k8s_snapshots.errors import (
     DeltasParseError
 )
 from k8s_snapshots.logging import Loggable
+from k8s_snapshots.backends import find_backend_for_volume, get_backend
 
 _logger = structlog.get_logger(__name__)
 
@@ -32,10 +33,13 @@ class Rule(Loggable):
     #: For Kubernetes resources: The selfLink of the source
     source = attr.ib(default=None)
 
+    backend: Any = None
+
     @classmethod
     def from_volume(
             cls,
             volume: pykube.objects.PersistentVolume,
+            backend,
             source: Union[
                 pykube.objects.PersistentVolumeClaim,
                 pykube.objects.PersistentVolume
@@ -70,6 +74,7 @@ class Rule(Loggable):
 
         return cls(
             name=rule_name_from_k8s_source(source, claim_name),
+            backend=backend,
             source=source.obj['metadata']['selfLink'],
             deltas=deltas,
             gce_disk=gce_disk,
@@ -79,6 +84,12 @@ class Rule(Loggable):
     def to_dict(self) -> Dict[str, Any]:
         """ Helper, returns attr.asdict(self) """
         return attr.asdict(self)
+
+
+def get_backend_for_rule(ctx: Context, rule: Rule):
+    if rule.backend:
+        return get_backend(rule.backend)
+    return ctx.get_backend()
 
 
 def rule_name_from_k8s_source(
@@ -166,10 +177,10 @@ def serialize_deltas(deltas: Iterable[timedelta]) -> str:
 
 
 async def rule_from_pv(
-        ctx: Context,
-        volume: pykube.objects.PersistentVolume,
-        deltas_annotation_key: str,
-        use_claim_name: bool=False,
+    ctx: Context,
+    volume: pykube.objects.PersistentVolume,
+    deltas_annotation_key: str,
+    use_claim_name: bool=False,
 ) -> Rule:
     """Given a persistent volume object, create a backup role
     object. Can return None if this volume is not configured for
@@ -186,15 +197,16 @@ async def rule_from_pv(
         annotation_key=deltas_annotation_key,
     )
 
-    # Verify the provider
-
-    provisioner = volume.annotations.get('pv.kubernetes.io/provisioned-by')
-    _log = _log.bind(provisioner=provisioner)
-    if provisioner != 'kubernetes.io/gce-pd':
+    # Do we have a backend that supports this disk?
+    backend_name, backend_module = find_backend_for_volume(volume)
+    if not backend_module:
         raise UnsupportedVolume(
-            'Unsupported provisioner',
-            provisioner=provisioner
+            'Unsupported volume',
+            volume=volume
         )
+    else:
+        _log.debug('Volume supported by backend',
+                   volume=volume, backend=backend_module)
 
     def get_deltas(annotations: Dict) -> List[timedelta]:
         """
@@ -241,7 +253,7 @@ async def rule_from_pv(
     try:
         _log.debug('Checking volume for deltas')
         deltas = get_deltas(volume.annotations)
-        return Rule.from_volume(volume, source=volume, deltas=deltas,
+        return Rule.from_volume(volume, backend, source=volume, deltas=deltas,
             use_claim_name=use_claim_name)
     except AnnotationNotFound:
         if claim_ref is None:
@@ -263,7 +275,7 @@ async def rule_from_pv(
     try:
         _log.debug('Checking volume claim for deltas')
         deltas = get_deltas(volume_claim.annotations)
-        return Rule.from_volume(volume, source=volume_claim, deltas=deltas,
+        return Rule.from_volume(volume, backend, source=volume_claim, deltas=deltas,
             use_claim_name=use_claim_name)
     except AnnotationNotFound as exc:
         raise AnnotationNotFound(

@@ -20,14 +20,11 @@ class Context:
 
         return self._kube_config
 
-    @property
-    def backend(self):
-        if self._backend is None:
-            module_name = {
-                'google': 'google'
-            }[self.config.get('cloud_provider')]
-            self._backend = import_module('k8s_snapshots.backends.%s' % module_name)
-        return self._backend
+    def get_backend(self):
+        module_name = {
+            'google': 'google'
+        }[self.config.get('cloud_provider')]
+        return import_module('k8s_snapshots.backends.%s' % module_name)
 
     def load_kube_config(self):
         cfg = None

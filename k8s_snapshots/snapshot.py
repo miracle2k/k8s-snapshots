@@ -2,7 +2,7 @@ import asyncio
 import inspect
 from datetime import timedelta
 from typing import Dict, Tuple, List, Iterable, Callable, Union, \
-    Awaitable, Container
+    Awaitable, Any
 
 import aiohttp
 import pendulum
@@ -13,7 +13,7 @@ from tarsnapper.expire import expire
 from k8s_snapshots import events, errors, serialize
 from k8s_snapshots.asyncutils import run_in_executor
 from k8s_snapshots.context import Context
-from k8s_snapshots.rule import Rule
+from k8s_snapshots.rule import Rule, get_backend_for_rule
 from .backends.abstract import Snapshot, NewSnapshotIdentifier, SnapshotStatus
 
 
@@ -30,7 +30,10 @@ async def expire_snapshots(ctx, rule: Rule):
 
     _log.debug(events.Expiration.STARTED)
 
-    snapshots_objects = filter_snapshots_by_rule(await load_snapshots(ctx), rule)
+    backend = get_backend_for_rule(ctx, rule)
+
+    snapshots_objects = filter_snapshots_by_rule(
+        await load_snapshots(ctx, backend), rule)
     snapshots_with_date = {s: s.created_at for s in snapshots_objects}
 
     to_keep = expire(snapshots_with_date, rule.deltas)
@@ -57,8 +60,9 @@ async def expire_snapshots(ctx, rule: Rule):
 
             # TODO: Deleting a snapshot is usually an async process too,
             # and to be completely accurate, we should wait for it to complete.
+            backend = get_backend_for_rule(ctx, rule)
             await run_in_executor(
-                lambda: ctx.backend.delete_snapshot(ctx, snapshot)
+                lambda: backend.delete_snapshot(ctx, snapshot)
             )
             expired_snapshots.append(snapshot.name)
 
@@ -78,6 +82,8 @@ async def make_backup(ctx, rule):
     2. Wait until the snapshot is finished.
     3. Expire old snapshots
     """
+    
+    backend = get_backend_for_rule(ctx, rule)
     snapshot_name = new_snapshot_name(ctx, rule)
 
     _log = _logger.new(
@@ -88,8 +94,7 @@ async def make_backup(ctx, rule):
     try:
         snapshot_identifier = await create_snapshot(
             ctx,
-            rule.gce_disk,
-            rule.gce_disk_zone,
+            rule,
             snapshot_name,
             snapshot_description=serialize.dumps(rule),
         )
@@ -103,7 +108,7 @@ async def make_backup(ctx, rule):
         )
 
         await poll_for_status(
-            lambda: get_snapshot_status(ctx, snapshot_identifier),
+            lambda: get_snapshot_status(ctx, backend, snapshot_identifier),
             retry_for=(SnapshotStatus.PENDING,)
         )
 
@@ -119,6 +124,7 @@ async def make_backup(ctx, rule):
 
     await set_snapshot_labels(
         ctx,
+        backend,
         snapshot_identifier,
         snapshot_labels(ctx),
     )
@@ -144,11 +150,13 @@ async def make_backup(ctx, rule):
 
 async def create_snapshot(
         ctx: Context,
-        disk_name: str,
-        disk_zone: str,
+        rule: Rule,
         snapshot_name: str,
         snapshot_description: str
 ) -> NewSnapshotIdentifier:
+    disk_name = rule.gce_disk
+    disk_zone = rule.gce_disk_zone
+
     _log = _logger.new(
         disk_name=disk_name,
         disk_zone=disk_zone,
@@ -160,8 +168,10 @@ async def create_snapshot(
         events.Snapshot.START,
         key_hints=['snapshot_name', 'rule.name']
     )
+
+    backend = get_backend_for_rule(ctx, rule)
     return await run_in_executor(
-        lambda: ctx.backend.create_snapshot(
+        lambda: backend.create_snapshot(
             ctx,
             disk_name,
             disk_zone,
@@ -173,7 +183,7 @@ async def create_snapshot(
 
 async def poll_for_status(
     refresh_func: Callable[..., Union[Dict, Awaitable[Dict]]],
-    retry_for: Container[str],
+    retry_for: Tuple[SnapshotStatus],
     sleep_time: int=1,
 ):
     """
@@ -251,6 +261,7 @@ def snapshot_labels(ctx: Context) -> Dict:
 
 async def set_snapshot_labels(
     ctx: Context,
+    backend: Any,
     snapshot_identifier: NewSnapshotIdentifier,
     labels: Dict
 ):
@@ -264,7 +275,7 @@ async def set_snapshot_labels(
         key_hints=['body.labels']
     )
     return await run_in_executor(
-        lambda: ctx.backend.set_snapshot_labels(ctx, snapshot_identifier, labels)
+        lambda: backend.set_snapshot_labels(ctx, snapshot_identifier, labels)
     )
 
 
@@ -289,30 +300,31 @@ def new_snapshot_name(ctx: Context, rule: Rule) -> str:
 
 
 async def get_snapshot_status(
-        ctx: Context,
-        snapshot_identifier: NewSnapshotIdentifier
+    ctx: Context,
+    backend: Any,
+    snapshot_identifier: NewSnapshotIdentifier
 ):
     return await run_in_executor(
-        lambda: ctx.backend.get_snapshot_status(ctx, snapshot_identifier)
+        lambda: backend.get_snapshot_status(ctx, snapshot_identifier)
     )
 
 
-async def get_snapshots(ctx, reload_trigger):
+async def get_snapshots(ctx: Context, backend, reload_trigger):
     """Query the existing snapshots from the cloud provider.
 
     If the channel "reload_trigger" contains any value, we
     refresh the list of snapshots. This will then cause the
     next backup to be scheduled.
     """
-    yield await load_snapshots(ctx)
+    yield await load_snapshots(ctx, backend)
     async for _ in reload_trigger:
-        yield await load_snapshots(ctx)
+        yield await load_snapshots(ctx, backend)
 
 
-async def load_snapshots(ctx) -> List[Snapshot]:
+async def load_snapshots(ctx: Context, backend: Any) -> List[Snapshot]:
     snapshot_label_filters = dict([snapshot_author_label(ctx)])
     return await run_in_executor(
-        lambda: ctx.backend.load_snapshots(ctx, snapshot_label_filters)
+        lambda: backend.load_snapshots(ctx, snapshot_label_filters)
     )
 
 
