@@ -16,6 +16,7 @@ from k8s_snapshots.errors import (
 )
 from k8s_snapshots.logging import Loggable
 from k8s_snapshots.backends import find_backend_for_volume, get_backend
+from k8s_snapshots.backends.abstract import DiskIdentifier
 
 _logger = structlog.get_logger(__name__)
 
@@ -27,19 +28,18 @@ class Rule(Loggable):
     """
     name = attr.ib()
     deltas = attr.ib()
-    gce_disk = attr.ib()
-    gce_disk_zone = attr.ib()
+    backend = attr.ib()
+    disk = attr.ib()
 
     #: For Kubernetes resources: The selfLink of the source
     source = attr.ib(default=None)
-
-    backend: Any = None
 
     @classmethod
     def from_volume(
             cls,
             volume: pykube.objects.PersistentVolume,
-            backend,
+            backend: str,
+            disk: DiskIdentifier,
             source: Union[
                 pykube.objects.PersistentVolumeClaim,
                 pykube.objects.PersistentVolume
@@ -47,24 +47,6 @@ class Rule(Loggable):
             deltas: List[timedelta],
             use_claim_name: bool=False
     ) -> 'Rule':
-
-        gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
-
-        # How can we know the zone? In theory, the storage class can
-        # specify a zone; but if not specified there, K8s can choose a
-        # random zone within the master region. So we really can't trust
-        # that value anyway.
-        # There is a label that gives a failure region, but labels aren't
-        # really a trustworthy source for this.
-        # Apparently, this is a thing in the Kubernetes source too, see:
-        # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
-        # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
-        gce_disk_zone = volume.labels.get(
-            'failure-domain.beta.kubernetes.io/zone'
-        )
-        if not gce_disk_zone:
-            # Abuse the annotation error class.
-            raise UnsupportedVolume('cannot find the zone of the disk')
 
         claim_name = ""
         if use_claim_name:
@@ -77,12 +59,10 @@ class Rule(Loggable):
             backend=backend,
             source=source.obj['metadata']['selfLink'],
             deltas=deltas,
-            gce_disk=gce_disk,
-            gce_disk_zone=gce_disk_zone,
+            disk=disk
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """ Helper, returns attr.asdict(self) """
         return attr.asdict(self)
 
 
@@ -205,8 +185,9 @@ async def rule_from_pv(
             volume=volume
         )
     else:
+        disk = backend_module.get_disk_identifier(volume)
         _log.debug('Volume supported by backend',
-                   volume=volume, backend=backend_module)
+                   volume=volume, backend=backend_module, disk=disk)
 
     def get_deltas(annotations: Dict) -> List[timedelta]:
         """
@@ -253,8 +234,8 @@ async def rule_from_pv(
     try:
         _log.debug('Checking volume for deltas')
         deltas = get_deltas(volume.annotations)
-        return Rule.from_volume(volume, backend, source=volume, deltas=deltas,
-            use_claim_name=use_claim_name)
+        return Rule.from_volume(volume, backend_name, disk=disk,
+            source=volume, deltas=deltas, use_claim_name=use_claim_name)
     except AnnotationNotFound:
         if claim_ref is None:
             raise
@@ -275,8 +256,8 @@ async def rule_from_pv(
     try:
         _log.debug('Checking volume claim for deltas')
         deltas = get_deltas(volume_claim.annotations)
-        return Rule.from_volume(volume, backend, source=volume_claim, deltas=deltas,
-            use_claim_name=use_claim_name)
+        return Rule.from_volume(volume, backend_name, disk=disk,
+            source=volume_claim, deltas=deltas, use_claim_name=use_claim_name)
     except AnnotationNotFound as exc:
         raise AnnotationNotFound(
             'No deltas found via volume claim'

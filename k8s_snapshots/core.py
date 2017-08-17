@@ -199,8 +199,7 @@ async def rules_from_volumes(ctx):
 async def get_rules(ctx):
     _log = _logger.new()
 
-    async for item in rules_from_volumes(ctx):
-        rules = ctx.config.get('rules') + item
+    async for rules in rules_from_volumes(ctx):
         _log.debug('get-rules.rules.updated', rules=rules)
         yield rules
 
@@ -260,10 +259,6 @@ async def watch_schedule(ctx, trigger, *, loop=None):
     async for item in combined:
         rules = item.get('rules')
         snapshots = item.get('snapshots')
-        # _log = _log.bind(
-        #     rules=rules,
-        #     snapshots=snapshots,
-        # )
 
         # Never schedule before we have data from both rules and snapshots
         if rules is None or snapshots is None:

@@ -154,12 +154,9 @@ async def create_snapshot(
         snapshot_name: str,
         snapshot_description: str
 ) -> NewSnapshotIdentifier:
-    disk_name = rule.gce_disk
-    disk_zone = rule.gce_disk_zone
-
     _log = _logger.new(
-        disk_name=disk_name,
-        disk_zone=disk_zone,
+        disk=rule.disk,
+        rule=rule,
         snapshot_name=snapshot_name,
         snapshot_description=snapshot_description
     )
@@ -173,8 +170,7 @@ async def create_snapshot(
     return await run_in_executor(
         lambda: backend.create_snapshot(
             ctx,
-            disk_name,
-            disk_zone,
+            rule.disk,
             snapshot_name,
             snapshot_description
         )
@@ -377,6 +373,5 @@ def determine_next_snapshot(snapshots, rules):
 
 def filter_snapshots_by_rule(snapshots: List[Snapshot], rule) -> Iterable[Snapshot]:
     def match_disk(snapshot: Snapshot):
-        return snapshot.disk.disk_name == rule.gce_disk and \
-            snapshot.disk.zone_name == rule.gce_disk_zone
+        return snapshot.disk == rule.disk
     return filter(match_disk, snapshots)

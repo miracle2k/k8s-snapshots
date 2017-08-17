@@ -10,19 +10,8 @@ class SnapshotStatus(enum.Enum):
     COMPLETE = 'snapshot.complete'
 
 
-class DiskIdentifier(NamedTuple):
-    """
-    Given an existing snapshot in a Cloud Provider Backend, we need to be
-    able to figure out which Kubernetes volume resource that snapshot
-    belongs to. The cloud provider may not know about Kubernetes, but
-    Kubernetes should know about the Cloud provider disk.
-
-    We ask the Cloud Provider to return some information about the disk
-    in the form of this tuple. We can then search in Kubernetes for the
-    right PersistentVolume matching this information.
-    """
-    disk_name: str
-    zone_name: str
+# It's up to a backend to decide how a disk should be identified
+DiskIdentifier = Any
 
 
 class Snapshot(NamedTuple):
@@ -53,8 +42,7 @@ def load_snapshots(ctx: Context, label_filters: Dict[str, str]) -> List[Snapshot
 
 def create_snapshot(
     ctx: Context,
-    disk_name: str,
-    disk_zone: str,
+    disk: DiskIdentifier,
     snapshot_name: str,
     snapshot_description: str
 ) -> NewSnapshotIdentifier:
@@ -63,6 +51,16 @@ def create_snapshot(
 
     This operation is expected to be asynchronous, so the value you return
     will identify the snapshot for the next call.
+    """
+    raise NotImplementedError()
+
+
+def get_snapshot_status(
+    ctx: Context,
+    snapshot_identifier: NewSnapshotIdentifier
+) -> SnapshotStatus:
+    """
+    Should return the current status of the snapshot.
     """
     raise NotImplementedError()
 

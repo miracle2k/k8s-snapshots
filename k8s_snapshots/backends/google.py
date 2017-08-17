@@ -1,5 +1,6 @@
 import json
 import pendulum
+import re
 from typing import List, Dict
 from googleapiclient import discovery
 from oauth2client.service_account import ServiceAccountCredentials
@@ -8,20 +9,105 @@ import pykube.objects
 import structlog
 from k8s_snapshots.context import Context
 from .abstract import Snapshot, SnapshotStatus, DiskIdentifier, NewSnapshotIdentifier
-from ..errors import SnapshotCreateError
+from ..errors import SnapshotCreateError, UnsupportedVolume
 
 
 _logger = structlog.get_logger(__name__)
 
+
+#: The regex that a snapshot name has to match.
+#: Regex provided by the createSnapshot error response.
+GOOGLE_SNAPSHOT_NAME_REGEX = r'^(?:[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?)$'
+
+# Google Label keys and values must conform to the following restrictions:
+# - Keys and values cannot be longer than 63 characters each.
+# - Keys and values can only contain lowercase letters, numeric characters,
+#   underscores, and dashes. International characters are allowed.
+# - Label keys must start with a lowercase letter and international characters
+#   are allowed.
+# - Label keys cannot be empty.
+# See https://cloud.google.com/compute/docs/labeling-resources for more
+
+#: The regex that a label key and value has to match, additionally it has to be
+#: lowercase, this is checked with str().islower()
+GOOGLE_LABEL_REGEX = r'^(?:[-\w]{0,63})$'
 
 
 def validate_config(config):
     """Ensure the config of this backend is correct.
     """
 
-    pass
+    # XXX: check the gcloud_project key
+
+    test_datetime = pendulum.now('utc').format(
+        config['snapshot_datetime_format'])
+    test_snapshot_name = f'dummy-snapshot-{test_datetime}'
+
+    if not re.match(GOOGLE_SNAPSHOT_NAME_REGEX, test_snapshot_name):
+        _logger.error(
+            'config.error',
+            key='snapshot_datetime_format',
+            message='Snapshot datetime format returns invalid string. '
+                    'Note that uppercase characters are forbidden.',
+            test_snapshot_name=test_snapshot_name,
+            regex=GOOGLE_SNAPSHOT_NAME_REGEX
+        )
+        is_valid = False
+
+    # Configuration keys that are either a Google
+    glabel_key_keys = {'snapshot_author_label'}
+    glabel_value_keys = {'snapshot_author_label_key'}
+
+    for key in glabel_key_keys | glabel_value_keys:
+        value = config[key]  # type: str
+        re_match = re.match(GOOGLE_LABEL_REGEX, value)
+        is_glabel_key = key in glabel_key_keys
+        is_glabel_valid = (
+            re_match and value.islower() and
+            value[0].isalpha() or not is_glabel_key
+        )
+
+        if not is_glabel_valid:
+            _logger.error(
+                'config.error',
+                message=f'Configuration value is not a valid '
+                        f'Google Label {"Key" if is_glabel_key else "Value"}. '
+                        f'See '
+                        f'https://cloud.google.com/compute/docs/labeling-resources '
+                        f'for more',
+                key_hints=['value', 'regex'],
+                key=key,
+                is_lower=value.islower(),
+                value=config[key],
+                regex=GOOGLE_LABEL_REGEX,
+            )
+            is_valid = False
+
+    return is_valid
 
 
+def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> DiskIdentifier:
+    gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
+
+    # How can we know the zone? In theory, the storage class can
+    # specify a zone; but if not specified there, K8s can choose a
+    # random zone within the master region. So we really can't trust
+    # that value anyway.
+    # There is a label that gives a failure region, but labels aren't
+    # really a trustworthy source for this.
+    # Apparently, this is a thing in the Kubernetes source too, see:
+    # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
+    # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
+    gce_disk_zone = volume.labels.get(
+        'failure-domain.beta.kubernetes.io/zone'
+    )
+    if not gce_disk_zone:
+        raise UnsupportedVolume('cannot find the zone of the disk')
+
+    return {'name': gce_disk, 'zone': gce_disk_zone}
+    
+
+#filters={'volume-id': volume.id}
 def supports_volume(volume: pykube.objects.PersistentVolume):
     provisioner = volume.annotations.get('pv.kubernetes.io/provisioned-by')
     return provisioner == 'kubernetes.io/gce-pd'
@@ -63,8 +149,7 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
 
 def create_snapshot(
         ctx: Context,
-        disk_name: str,
-        disk_zone: str,
+        disk: DiskIdentifier,
         snapshot_name: str,
         snapshot_description: str
 ) -> NewSnapshotIdentifier:
