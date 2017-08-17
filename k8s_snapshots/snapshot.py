@@ -56,7 +56,7 @@ async def expire_snapshots(ctx, rule: Rule):
             continue
 
         if snapshot not in to_keep:
-            _log_inner.debug(events.Expiration.DELETE)
+            _log_inner.info(events.Expiration.DELETE)
 
             # TODO: Deleting a snapshot is usually an async process too,
             # and to be completely accurate, we should wait for it to complete.
