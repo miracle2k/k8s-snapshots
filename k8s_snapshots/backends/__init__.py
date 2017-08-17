@@ -2,7 +2,7 @@ from importlib import import_module
 import pykube.objects
 
 
-BACKENDS = ['google']
+BACKENDS = ['google', 'aws']
 
 
 def get_backends():
