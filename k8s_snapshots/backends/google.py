@@ -4,9 +4,14 @@ from typing import List, Dict
 from googleapiclient import discovery
 from oauth2client.service_account import ServiceAccountCredentials
 from oauth2client.client import GoogleCredentials
+import structlog
 from k8s_snapshots.context import Context
 from .abstract import Snapshot, SnapshotStatus, DiskIdentifier, NewSnapshotIdentifier
 from ..errors import SnapshotCreateError
+
+
+_logger = structlog.get_logger(__name__)
+
 
 
 def validate_config(config):
@@ -96,6 +101,10 @@ def get_snapshot_status(
 
     We check both states to make sure the snapshot was created.
     """
+
+    _log = _logger.new(
+        snapshot_identifier=snapshot_identifier,
+    )
     
     gcloud = get_gcloud(ctx)
     
@@ -107,6 +116,8 @@ def get_snapshot_status(
     ).execute()
 
     if not operation['status'] == 'DONE':
+        _log.debug('google.status.operation_not_complete',
+                   status=operation['status'])
         return SnapshotStatus.PENDING
 
     # To be sure, check the state of the snapshot itself
@@ -117,8 +128,12 @@ def get_snapshot_status(
 
     status = snapshot['status']
     if status == 'FAILED':
+        _log.debug('google.status.failed',
+                   status=status)
         raise SnapshotCreateError(status)
-    elif status == 'READY':
+    elif status != 'READY':
+        _log.debug('google.status.not_ready',
+                   status=status)
         return SnapshotStatus.PENDING
 
     return SnapshotStatus.COMPLETE

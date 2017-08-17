@@ -49,7 +49,7 @@ async def expire_snapshots(ctx, rule: Rule):
         
         if snapshot in to_keep:
             _log_inner.debug(events.Expiration.KEPT)
-            kept_snapshots.append(snapshot)
+            kept_snapshots.append(snapshot.name)
             continue
 
         if snapshot not in to_keep:
@@ -208,8 +208,6 @@ async def poll_for_status(
         if inspect.isawaitable(result):
             result = await result
 
-        print('result is', result, retry_for)
-
         _log.debug(
             'poll-for-status.refreshed',
             key_hints=[
@@ -219,7 +217,7 @@ async def poll_for_status(
             result=result
         )
 
-        if result in retry_for:
+        if not result in retry_for:
             break
 
         refresh_count += 1
