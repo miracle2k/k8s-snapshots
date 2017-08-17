@@ -1,11 +1,8 @@
-import json
 import os
-
 import pykube
+from importlib import import_module
 import structlog
-from googleapiclient import discovery
-from oauth2client.service_account import ServiceAccountCredentials
-from oauth2client.client import GoogleCredentials
+
 
 _logger = structlog.get_logger()
 
@@ -14,6 +11,7 @@ class Context:
     def __init__(self, config=None):
         self.config = config
         self._kube_config = None
+        self._backend = None
 
     @property
     def kube_config(self):
@@ -21,6 +19,15 @@ class Context:
             self._kube_config = self.load_kube_config()
 
         return self._kube_config
+
+    @property
+    def backend(self):
+        if self._backend is None:
+            module_name = {
+                'google': 'google'
+            }[self.config.get('cloud_provider')]
+            self._backend = import_module('k8s_snapshots.backends.%s' % module_name)
+        return self._backend
 
     def load_kube_config(self):
         cfg = None
@@ -50,42 +57,4 @@ class Context:
     def kube_client(self):
         return pykube.HTTPClient(self.kube_config)
 
-    def gcloud(self, version: str='v1'):
-        """
-        Get a configured Google Compute API Client instance.
 
-        Note that the Google API Client is not threadsafe. Cache the instance locally
-        if you want to avoid OAuth overhead between calls.
-
-        Parameters
-        ----------
-        version
-            Compute API version
-        """
-        SCOPES = 'https://www.googleapis.com/auth/compute'
-        credentials = None
-
-        if self.config.get('gcloud_json_keyfile_name'):
-            credentials = ServiceAccountCredentials.from_json_keyfile_name(
-                self.config.get('gcloud_json_keyfile_name'),
-                scopes=SCOPES)
-
-        if self.config.get('gcloud_json_keyfile_string'):
-            keyfile = json.loads(self.config.get('gcloud_json_keyfile_string'))
-            credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-                keyfile, scopes=SCOPES)
-
-        if not credentials:
-            credentials = GoogleCredentials.get_application_default()
-
-        if not credentials:
-            raise RuntimeError("Auth for Google Cloud was not configured")
-
-        compute = discovery.build(
-            'compute',
-            version,
-            credentials=credentials,
-            # https://github.com/google/google-api-python-client/issues/299#issuecomment-268915510
-            cache_discovery=False
-        )
-        return compute

@@ -1,20 +1,21 @@
 import asyncio
 import inspect
 from datetime import timedelta
-from typing import Optional, Dict, Tuple, List, Iterable, Callable, Union, \
+from typing import Dict, Tuple, List, Iterable, Callable, Union, \
     Awaitable, Container
 
 import aiohttp
 import pendulum
 import re
 import structlog
-from googleapiclient.discovery import Resource as GoogleResource
 from tarsnapper.expire import expire
 
 from k8s_snapshots import events, errors, serialize
 from k8s_snapshots.asyncutils import run_in_executor
 from k8s_snapshots.context import Context
 from k8s_snapshots.rule import Rule
+from .backends.abstract import Snapshot, NewSnapshotIdentifier, SnapshotStatus
+
 
 _logger = structlog.get_logger(__name__)
 
@@ -28,41 +29,36 @@ async def expire_snapshots(ctx, rule: Rule):
     )
     _log.debug('snapshot.expired')
 
-    snapshots = await load_snapshots(ctx)
-    snapshots = filter_snapshots_by_rule(snapshots, rule)
-    snapshots = {s['name']: parse_creation_timestamp(s) for s in snapshots}
+    snapshots_objects = filter_snapshots_by_rule(await load_snapshots(ctx), rule)
+    snapshots_with_date = {s: s.created_at for s in snapshots_objects}
 
-    to_keep = expire(snapshots, rule.deltas)
-    expired_snapshots = []
+    to_keep = expire(snapshots_with_date, rule.deltas)
+    expired_snapshots: List[str] = []
     kept_snapshots = []
 
-    for snapshot_name, snapshot_time_created in snapshots.items():
+    for snapshot, snapshot_time_created in snapshots_with_date.items():
         _log = _log.new(
-            snapshot_name=snapshot_name,
+            snapshot=snapshot,
             snapshot_time_created=snapshot_time_created,
             key_hints=[
-                'snapshot_name',
+                'snapshot.name',
                 'snapshot_time_created',
             ]
         )
-        if snapshot_name in to_keep:
+        if snapshot in to_keep:
             _log.debug('expire.keep')
-            kept_snapshots.append(snapshot_name)
+            kept_snapshots.append(snapshot)
             continue
 
-        if snapshot_name not in to_keep:
+        if snapshot not in to_keep:
             _log.debug('snapshot.expiring')
-            result = await run_in_executor(
-                ctx.gcloud().snapshots().delete(
-                    snapshot=snapshot_name,
-                    project=ctx.config['gcloud_project']
-                ).execute
+            await run_in_executor(
+                lambda: ctx.backend.delete_snapshot(ctx, snapshot)
             )
-            expired_snapshots.append(snapshot_name)
+            expired_snapshots.append(snapshot.name)
 
     _log.info(
         events.Snapshot.EXPIRED,
-        key_hint='snapshot_name',
         snapshots={
             'expired': expired_snapshots,
             'kept': kept_snapshots,
@@ -85,22 +81,7 @@ async def make_backup(ctx, rule):
     )
 
     try:
-        # Returns a ZoneOperation: {kind: 'compute#operation',
-        # operationType: 'createSnapshot', ...}.
-        # Google's documentation is confusing regarding this, since there's two
-        # tables of payload parameter descriptions on the page, one of them
-        # describes the input parameters, but contains output-only parameters,
-        # the correct table can be found at
-        # https://cloud.google.com/compute/docs/reference/latest/disks/createSnapshot#response
-        # snapshot_operation = await run_in_executor(
-        #     gcloud.disks().createSnapshot(
-        #         disk=rule.gce_disk,
-        #         project=ctx.config['gcloud_project'],
-        #         zone=rule.gce_disk_zone,
-        #         body=request_body
-        #     ).execute
-        # )
-        snapshot_operation = await create_snapshot(
+        snapshot_identifier = await create_snapshot(
             ctx,
             rule.gce_disk,
             rule.gce_disk_zone,
@@ -111,26 +92,17 @@ async def make_backup(ctx, rule):
         _log.debug(
             'snapshot.operation-started',
             key_hints=[
-                'snapshot_name',
-                'snapshot_operation.name',
-                'snapshot_operation.status',
+                'snapshot_name'
             ],
-            snapshot_operation=snapshot_operation
+            snapshot_identifier=snapshot_identifier
         )
 
-        # Wait for the createSnapshot operation to leave the 'PENDING' and
-        # 'RUNNING' states.
-        # A ZoneOperation can have a state of 'PENDING', 'RUNNING', or 'DONE'
-        snapshot_operation = await poll_for_status(
-            snapshot_operation,
-            lambda: get_zone_operation(
-                ctx,
-                rule.gce_disk_zone,
-                snapshot_operation['name']
-            ),
-            retry_for=('PENDING', 'RUNNING')
+        await poll_for_status(
+            lambda: get_snapshot_status(ctx, snapshot_identifier),
+            retry_for=(SnapshotStatus.PENDING,)
         )
 
+    # TODO: If there is some kind of coding error, we should crash I think.
     except Exception as exc:
         _log.exception(
             events.Snapshot.ERROR,
@@ -140,40 +112,15 @@ async def make_backup(ctx, rule):
             'Error creating snapshot'
         ) from exc
 
-    if not snapshot_operation['status'] == 'DONE':
-        raise errors.SnapshotCreateError(
-            f'Unexpected ZoneOperation status: {snapshot_operation["status"]} '
-            f'expected "DONE"',
-            snapshot_operation=snapshot_operation,
-        )
-
-    snapshot = await get_snapshot(ctx, snapshot_name)
-
     await set_snapshot_labels(
         ctx,
-        snapshot,
+        snapshot_identifier,
         snapshot_labels(ctx),
     )
 
-    _log.debug('Waiting for snapshot to be ready')
-
-    snapshot = await poll_for_status(
-        snapshot,
-        lambda: get_snapshot(ctx, snapshot_name),
-        retry_for=('CREATING', 'UPLOADING'),
-    )
-
-    if not snapshot['status'] == 'READY':
-        _log.error(
-            events.Snapshot.ERROR,
-            snapshot=snapshot,
-            key_hints=['snapshot_name'],
-        )
-        return
-
     _log.info(
         events.Snapshot.CREATED,
-        snapshot=snapshot,
+        snapshot_identifier=snapshot_identifier,
         key_hints=['snapshot_name', 'rule.name'],
     )
 
@@ -195,11 +142,8 @@ async def create_snapshot(
         disk_name: str,
         disk_zone: str,
         snapshot_name: str,
-        snapshot_description: str,
-        *,
-        gcloud: Optional[GoogleResource]=None
-) -> Dict:
-    gcloud = gcloud or ctx.gcloud()
+        snapshot_description: str
+) -> NewSnapshotIdentifier:
     _log = _logger.new(
         disk_name=disk_name,
         disk_zone=disk_zone,
@@ -207,42 +151,32 @@ async def create_snapshot(
         snapshot_description=snapshot_description
     )
 
-    request_body = {
-        'name': snapshot_name,
-        'description': snapshot_description
-    }
     _log.info(
         events.Snapshot.START,
-        key_hints=['snapshot_name', 'rule.name'],
-        request=request_body,
+        key_hints=['snapshot_name', 'rule.name']
     )
     return await run_in_executor(
-        gcloud.disks().createSnapshot(
-            disk=disk_name,
-            project=ctx.config['gcloud_project'],
-            zone=disk_zone,
-            body=request_body
-        ).execute
+        lambda: ctx.backend.create_snapshot(
+            ctx,
+            disk_name,
+            disk_zone,
+            snapshot_name,
+            snapshot_description
+        )
     )
 
 
 async def poll_for_status(
-        resource: Dict,
-        refresh_func: Callable[..., Union[Dict, Awaitable[Dict]]],
-        retry_for: Container[str],
-        status_key: str='status',
-        sleep_time: int=1,
+    refresh_func: Callable[..., Union[Dict, Awaitable[Dict]]],
+    retry_for: Container[str],
+    sleep_time: int=1,
 ):
     """
-    Refreshes a resource using ``refresh_func`` until ``resource[status_key]`
-    is not one of the values in ``retry_for``.
+    Call refresh_func until the return value  is not one of the values
+    in ``retry_for``.
 
     Parameters
     ----------
-    resource
-        The initial version of the resource, if ``resource[status_key]``
-        already is `not in` ``retry_for``, this method will return the resource
-        as-is without polling.
     refresh_func
         Callable that returns either
 
@@ -258,33 +192,28 @@ async def poll_for_status(
     -------
 
     """
-    _log = _logger.new(
-        status_key=status_key
-    )
+    _log = _logger.new()
     refresh_count = 0
     time_start = pendulum.now()
 
-    while resource[status_key] in retry_for:
+    while True:
         await asyncio.sleep(sleep_time)  # Sleep first
-
-        resource = refresh_func()
-        # If refresh_func returned an awaitable, await it
-        if inspect.isawaitable(resource):
-            _log.debug(
-                'poll-for-status.awaiting-resource',
-            )
-            resource = await resource
+        
+        result = refresh_func()
+        if inspect.isawaitable(result):
+            result = await result
+        if result in retry_for:
+            break
 
         refresh_count += 1
 
         _log.debug(
             'poll-for-status.refreshed',
             key_hints=[
-                'initial_resource.selfLink',
-                f'resource.{status_key}'
+                'result'
             ],
-            resource=resource,
-            refresh_count=refresh_count
+            refresh_count=refresh_count,
+            result=result
         )
 
     time_taken = pendulum.now() - time_start
@@ -292,18 +221,15 @@ async def poll_for_status(
     _log.debug(
         'poll-for-status.done',
         key_hints=[
-            'resource.name',
-            f'resource.{status_key}',
             'refresh_count',
             'time_taken',
         ],
-        resource=resource,
-        time_taken=time_taken,
         refresh_count=refresh_count,
         time_start=time_start,
+        time_taken=time_taken
     )
 
-    return resource
+    return result
 
 
 def snapshot_author_label(ctx: Context) -> Tuple[str, str]:
@@ -318,31 +244,21 @@ def snapshot_labels(ctx: Context) -> Dict:
 
 
 async def set_snapshot_labels(
-        ctx: Context,
-        snapshot: Dict,
-        labels: Dict,
-        gcloud: Optional[GoogleResource]=None,
+    ctx: Context,
+    snapshot_identifier: NewSnapshotIdentifier,
+    labels: Dict
 ):
     _log = _logger.new(
-        snapshot_name=snapshot['name'],
+        snapshot_identifier=snapshot_identifier,
         labels=labels,
     )
-    gcloud = gcloud or ctx.gcloud()
-    body = {
-        'labels': labels,
-        'labelFingerprint': snapshot['labelFingerprint'],
-    }
+        
     _log.debug(
         'snapshot.set-labels',
-        key_hints=['body.labels'],
-        body=body,
+        key_hints=['body.labels']
     )
     return await run_in_executor(
-        gcloud.snapshots().setLabels(
-            resource=snapshot['name'],
-            project=ctx.config['gcloud_project'],
-            body=body,
-        ).execute
+        lambda: ctx.backend.set_snapshot_labels(ctx, snapshot_identifier, labels)
     )
 
 
@@ -366,40 +282,17 @@ def new_snapshot_name(ctx: Context, rule: Rule) -> str:
     return f'{name_truncated}{suffix}'
 
 
-async def get_zone_operation(
+async def get_snapshot_status(
         ctx: Context,
-        zone: str,
-        operation_name: str,
-        *,
-        gcloud: Optional[GoogleResource]=None
+        snapshot_identifier: NewSnapshotIdentifier
 ):
-    gcloud = gcloud or ctx.gcloud()
     return await run_in_executor(
-        gcloud.zoneOperations().get(
-            project=ctx.config['gcloud_project'],
-            zone=zone,
-            operation=operation_name
-        ).execute
-    )
-
-
-async def get_snapshot(
-        ctx: Context,
-        snapshot_name: str,
-        *,
-        gcloud: Optional[GoogleResource]=None
-) -> Dict:
-    gcloud = gcloud or ctx.gcloud()
-    return await run_in_executor(
-        gcloud.snapshots().get(
-            snapshot=snapshot_name,
-            project=ctx.config['gcloud_project']
-        ).execute
+        lambda: ctx.backend.get_snapshot_status(ctx, snapshot_identifier)
     )
 
 
 async def get_snapshots(ctx, reload_trigger):
-    """Query the existing snapshots from Google Cloud.
+    """Query the existing snapshots from the cloud provider.
 
     If the channel "reload_trigger" contains any value, we
     refresh the list of snapshots. This will then cause the
@@ -410,27 +303,11 @@ async def get_snapshots(ctx, reload_trigger):
         yield await load_snapshots(ctx)
 
 
-async def load_snapshots(ctx) -> List[Dict]:
-    resp = await run_in_executor(
-        ctx.gcloud().snapshots()
-        .list(
-            project=ctx.config['gcloud_project'],
-            filter=snapshot_list_filter(ctx),
-        )
-        .execute
+async def load_snapshots(ctx) -> List[Snapshot]:
+    snapshot_label_filters = dict([snapshot_author_label(ctx)])
+    return await run_in_executor(
+        lambda: ctx.backend.load_snapshots(ctx, snapshot_label_filters)
     )
-    return resp.get('items', [])
-
-
-def snapshot_list_filter(ctx: Context) -> str:
-    key, value = snapshot_author_label(ctx)
-    return f'labels.{key} eq {value}'
-
-
-def parse_creation_timestamp(snapshot: Dict) -> pendulum.Pendulum:
-    return pendulum.parse(
-        snapshot['creationTimestamp']
-    ).in_timezone('utc')
 
 
 def determine_next_snapshot(snapshots, rules):
@@ -448,7 +325,7 @@ def determine_next_snapshot(snapshots, rules):
         # Find all the snapshots that match this rule
         snapshots_for_rule = filter_snapshots_by_rule(snapshots, rule)
         # Rewrite the list to snapshot
-        snapshot_times = map(parse_creation_timestamp, snapshots_for_rule)
+        snapshot_times = map(lambda s: s.created_at, snapshots_for_rule)
         # Sort by timestamp
         snapshot_times = sorted(snapshot_times, reverse=True)
         snapshot_times = list(snapshot_times)
@@ -480,9 +357,8 @@ def determine_next_snapshot(snapshots, rules):
     return next_rule, next_timestamp
 
 
-def filter_snapshots_by_rule(snapshots, rule) -> Iterable:
-    def match_disk(snapshot):
-        url_part = '/zones/{zone}/disks/{name}'.format(
-            zone=rule.gce_disk_zone, name=rule.gce_disk)
-        return snapshot['sourceDisk'].endswith(url_part)
+def filter_snapshots_by_rule(snapshots: List[Snapshot], rule) -> Iterable[Snapshot]:
+    def match_disk(snapshot: Snapshot):
+        return snapshot.disk.disk_name == rule.gce_disk and \
+            snapshot.disk.zone_name == rule.gce_disk_zone
     return filter(match_disk, snapshots)

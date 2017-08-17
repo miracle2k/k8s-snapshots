@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
     #: UTC.
     'snapshot_datetime_format': '%d%m%y-%H%M%S',
     'log_level': 'INFO',
+    'cloud_provider': 'google',
     'gcloud_project': '',
     'gcloud_json_keyfile_name': '',
     'gcloud_json_keyfile_string': '',

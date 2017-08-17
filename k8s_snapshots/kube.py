@@ -119,7 +119,7 @@ async def get_resource_or_none(
 
 def watch_resources_sync(
         client_factory: ClientFactory,
-        resource_type: type(pykube.objects.APIObject),
+        resource_type: pykube.objects.APIObject,
 ) -> Iterable:
     return Kubernetes(client_factory).watch(
         resource_type=resource_type
@@ -128,7 +128,7 @@ def watch_resources_sync(
 
 async def watch_resources(
         ctx: Context,
-        resource_type: type(Resource),
+        resource_type: Resource,
         *,
         delay: int,
         loop=None
@@ -146,6 +146,7 @@ async def watch_resources(
 
     async for item in async_gen:
         yield item
+
 
 async def _watch_resources_thread_wrapper(
         client_factory: Callable[[], pykube.HTTPClient],
