@@ -1,7 +1,7 @@
 import json
 import pendulum
 import re
-from typing import List, Dict
+from typing import List, Dict, NamedTuple
 from googleapiclient import discovery
 from oauth2client.service_account import ServiceAccountCredentials
 from oauth2client.client import GoogleCredentials
@@ -86,7 +86,12 @@ def validate_config(config):
     return is_valid
 
 
-def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> DiskIdentifier:
+class GoogleDiskIdentifier(NamedTuple):
+    name: str
+    zone: str
+
+
+def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskIdentifier:
     gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
 
     # How can we know the zone? In theory, the storage class can
@@ -104,10 +109,9 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> DiskIdentifi
     if not gce_disk_zone:
         raise UnsupportedVolume('cannot find the zone of the disk')
 
-    return {'name': gce_disk, 'zone': gce_disk_zone}
+    return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_zone)
     
 
-#filters={'volume-id': volume.id}
 def supports_volume(volume: pykube.objects.PersistentVolume):
     provisioner = volume.annotations.get('pv.kubernetes.io/provisioned-by')
     return provisioner == 'kubernetes.io/gce-pd'
@@ -141,17 +145,17 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
         snapshots.append(Snapshot(
             name=item['name'],
             created_at=parse_timestamp(item['creationTimestamp']),
-            disk=DiskIdentifier(zone_name=zone, disk_name=disk)
+            disk=GoogleDiskIdentifier(zone=zone, name=disk)
         ))
 
     return snapshots
 
 
 def create_snapshot(
-        ctx: Context,
-        disk: DiskIdentifier,
-        snapshot_name: str,
-        snapshot_description: str
+    ctx: Context,
+    disk: GoogleDiskIdentifier,
+    snapshot_name: str,
+    snapshot_description: str
 ) -> NewSnapshotIdentifier:
     request_body = {
         'name': snapshot_name,
@@ -168,15 +172,15 @@ def create_snapshot(
     # the correct table can be found at
     # https://cloud.google.com/compute/docs/reference/latest/disks/createSnapshot#response
     operation = gcloud.disks().createSnapshot(
-        disk=disk_name,
+        disk=disk.name,
         project=ctx.config['gcloud_project'],
-        zone=disk_zone,
+        zone=disk.zone,
         body=request_body
     ).execute()
 
     return {
         'snapshot_name': snapshot_name,
-        'zone': disk_zone,
+        'zone': disk.zone,
         'operation_name': operation['name']
     }
 
