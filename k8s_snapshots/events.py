@@ -66,6 +66,17 @@ class Rule(EventEnum):
 
 
 @enum.unique
+class Expiration(EventEnum):
+    """
+    Events related to snapshot expiration.
+    """
+    STARTED = 'expire.started'
+    KEPT = 'expire.kept'
+    DELETE = 'expire.delete'
+    COMPLETE = 'expire.complete'
+
+
+@enum.unique
 class Ping(EventEnum):
     """
     Events related to sending pings.

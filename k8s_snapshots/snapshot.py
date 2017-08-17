@@ -27,7 +27,8 @@ async def expire_snapshots(ctx, rule: Rule):
     _log = _logger.new(
         rule=rule,
     )
-    _log.debug('snapshot.expired')
+
+    _log.debug(events.Expiration.STARTED)
 
     snapshots_objects = filter_snapshots_by_rule(await load_snapshots(ctx), rule)
     snapshots_with_date = {s: s.created_at for s in snapshots_objects}
@@ -37,28 +38,32 @@ async def expire_snapshots(ctx, rule: Rule):
     kept_snapshots = []
 
     for snapshot, snapshot_time_created in snapshots_with_date.items():
-        _log = _log.new(
-            snapshot=snapshot,
+        _log_inner = _log.new(
+            snapshot_name=snapshot.name,
             snapshot_time_created=snapshot_time_created,
             key_hints=[
-                'snapshot.name',
+                'snapshot_name',
                 'snapshot_time_created',
             ]
         )
+        
         if snapshot in to_keep:
-            _log.debug('expire.keep')
+            _log_inner.debug(events.Expiration.KEPT)
             kept_snapshots.append(snapshot)
             continue
 
         if snapshot not in to_keep:
-            _log.debug('snapshot.expiring')
+            _log_inner.debug(events.Expiration.DELETE)
+
+            # TODO: Deleting a snapshot is usually an async process too,
+            # and to be completely accurate, we should wait for it to complete.
             await run_in_executor(
                 lambda: ctx.backend.delete_snapshot(ctx, snapshot)
             )
             expired_snapshots.append(snapshot.name)
 
     _log.info(
-        events.Snapshot.EXPIRED,
+        events.Expiration.COMPLETE,
         snapshots={
             'expired': expired_snapshots,
             'kept': kept_snapshots,
@@ -202,10 +207,8 @@ async def poll_for_status(
         result = refresh_func()
         if inspect.isawaitable(result):
             result = await result
-        if result in retry_for:
-            break
 
-        refresh_count += 1
+        print('result is', result, retry_for)
 
         _log.debug(
             'poll-for-status.refreshed',
@@ -215,6 +218,11 @@ async def poll_for_status(
             refresh_count=refresh_count,
             result=result
         )
+
+        if result in retry_for:
+            break
+
+        refresh_count += 1
 
     time_taken = pendulum.now() - time_start
 
