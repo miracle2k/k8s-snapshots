@@ -9,16 +9,20 @@ according to your specifications.
 **Supported Environments**:
 
 - Google Compute Engine disks.
+- AWS EBS disks.
 
-Support for AWS is planned.
+
+Want to help adding support for other backends? It's pretty straightforward.
+Have a look at the
+[API that backends need to implement](https://github.com/miracle2k/k8s-snapshots/blob/master/k8s_snapshots/backends/abstract.py).
+
 
 
 Quickstart
 ----------
 
-Run *k8s-snapshots* in your cluster. Don't forget to change the
-``GCLOUD_PROJCECT_NAME`` variable! In most cases, no further
-configuration is required:
+Let's run *k8s-snapshots* in your cluster:
+
 
 ```bash
 export GCLOUD_PROJCECT_NAME=rude-rastafari
@@ -38,9 +42,6 @@ spec:
       containers:
       - name: k8s-snapshots
         image: elsdoerfer/k8s-snapshots:v0.2
-        env:
-        - name: GCLOUD_PROJECT
-          value: $GCLOUD_PROJCECT_NAME
 EOF
 ```
 
@@ -133,7 +134,12 @@ access scope, you may need to configure these.
 <table>
   <tr>
     <td>GCLOUD_PROJECT</td>
-    <td>**Required**. Name of the Google Cloud project</td>
+    <td>
+      Name of the Google Cloud project. This is required to use the Google
+      Cloud API, but if it's not given, we try to read the value from
+      the [instance metadata service](https://cloud.google.com/compute/docs/storing-retrieving-metadata)
+      which will usually work.
+     </td>
   </tr>
   <tr>
     <td>GCLOUD_JSON_KEYFILE_NAME</td>
@@ -156,6 +162,11 @@ access scope, you may need to configure these.
     </td>
   </tr>
 </table>
+
+
+### Configure access permissions on AWS.
+
+Currently, we will try to connect with the default credentials.
 
 
 ### Pinging a third party service
