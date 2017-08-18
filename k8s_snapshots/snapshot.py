@@ -351,6 +351,7 @@ def determine_next_snapshot(snapshots, rules):
     """
     next_rule = None
     next_timestamp = None
+    next_snapshot_times = None
 
     for rule in rules:
         _log = _logger.new(rule=rule)
@@ -366,17 +367,14 @@ def determine_next_snapshot(snapshots, rules):
         if not snapshot_times:
             next_rule = rule
             next_timestamp = pendulum.now('utc') + timedelta(seconds=10)
-            _log.info(
-                events.Snapshot.SCHEDULED,
-                target=next_timestamp,
-                key_hints=['rule.name', 'target'],
-            )
+            next_snapshot_times = snapshot_times
             break
 
         target = snapshot_times[0] + rule.deltas[0]
         if not next_timestamp or target < next_timestamp:
             next_rule = rule
             next_timestamp = target
+            next_snapshot_times = snapshot_times
 
     if next_rule is not None and next_timestamp is not None:
         _logger.info(
@@ -384,6 +382,7 @@ def determine_next_snapshot(snapshots, rules):
             key_hints=['rule.name', 'target'],
             target=next_timestamp,
             rule=next_rule,
+            times=next_snapshot_times
         )
 
     return next_rule, next_timestamp
