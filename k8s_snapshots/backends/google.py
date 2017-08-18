@@ -47,11 +47,13 @@ def get_project_id(ctx: Context):
     return ctx.config['gcloud_project']
 
 
+# TODO: This is currently not called. When should we do so? Once the Google
+# Cloud backend is loaded for the first time?
 def validate_config(config):
     """Ensure the config of this backend is correct.
     """
 
-    # XXX: check the gcloud_project key
+    is_valid = True
 
     test_datetime = pendulum.now('utc').format(
         config['snapshot_datetime_format'])
