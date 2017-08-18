@@ -40,7 +40,7 @@ spec:
     spec:
       containers:
       - name: k8s-snapshots
-        image: elsdoerfer/k8s-snapshots:v0.2
+        image: elsdoerfer/k8s-snapshots:v0.3
 EOF
 ```
 
