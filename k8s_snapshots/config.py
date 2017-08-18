@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
     #: The key used when annotating PVs and PVCs with deltas
     'deltas_annotation_key': 'backup.kubernetes.io/deltas',
     #: This label will be set on all snapshots created by k8s-snapshots
-    'snapshot_author_label': 'k8s-snapshots-test',
+    'snapshot_author_label': 'k8s-snapshots',
     'snapshot_author_label_key': 'created-by',
     #: Number of seconds between Rule.HEARTBEAT events, ``0`` to disable.
     'schedule_heartbeat_interval_seconds': 600,
