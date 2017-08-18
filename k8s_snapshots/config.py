@@ -30,7 +30,6 @@ DEFAULT_CONFIG = {
     #: Turns debug mode on, not recommended in production
     'debug': False,
 
-    'cloud_provider': 'google',
     'gcloud_project': '',
     'gcloud_json_keyfile_name': '',
     'gcloud_json_keyfile_string': '',
@@ -38,8 +37,6 @@ DEFAULT_CONFIG = {
 
 
 def validate_config(config: Dict) -> bool:
-    # XXX: Validate the default cloud_provider? Or can be run the validation
-    # when loading a backend?
     return True
 
 

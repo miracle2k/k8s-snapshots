@@ -19,7 +19,7 @@ from aiochannel import Channel, ChannelEmpty
 from aiostream import stream
 
 from k8s_snapshots import events
-from k8s_snapshots.asyncutils import combine_latest
+from k8s_snapshots.asyncutils import combine_latest, StreamReader
 from k8s_snapshots.context import Context
 from k8s_snapshots.errors import (
     AnnotationNotFound,
@@ -217,23 +217,12 @@ async def watch_schedule(ctx, trigger, *, loop=None):
     loop = loop or asyncio.get_event_loop()
     _log = _logger.new()
 
-    rulesgen = get_rules(ctx)
-
-    # TODO: For now, we load the snapshots of a fixed backend, either AWS,
-    # or Google, or whatever is globally configured. But in theory different
-    # rules could have different backends, so "get_snapshots" would actually
-    # need to have a look at the rules itself, and check the snapshots of
-    # every applicable rule.
-    backend = ctx.get_backend()
-    snapgen = get_snapshots(ctx, backend, trigger)
+    # TODO: Note that we call get_rules() twice here, which means
+    # that we essentially
+    rules_reader = StreamReader(get_rules(ctx))
+    snapgen = get_snapshots(ctx, rules_reader.iter(), trigger)
 
     _log.debug('watch_schedule.start')
-
-    combined = combine_latest(
-        rules=rulesgen,
-        snapshots=snapgen,
-        defaults={'snapshots': None, 'rules': None}
-    )
 
     rules = None
 
@@ -255,6 +244,12 @@ async def watch_schedule(ctx, trigger, *, loop=None):
 
     if heartbeat_interval_seconds:
         asyncio.ensure_future(heartbeat())
+
+    combined = combine_latest(
+        rules=rules_reader.iter(),
+        snapshots=snapgen,
+        defaults={'snapshots': None, 'rules': None}
+    )
 
     async for item in combined:
         rules = item.get('rules')

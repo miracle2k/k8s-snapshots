@@ -2,7 +2,7 @@ import asyncio
 import inspect
 from datetime import timedelta
 from typing import Dict, Tuple, List, Iterable, Callable, Union, \
-    Awaitable, Any
+    Awaitable, Any, Set
 
 import aiohttp
 import pendulum
@@ -11,7 +11,7 @@ import structlog
 from tarsnapper.expire import expire
 
 from k8s_snapshots import events, errors, serialize
-from k8s_snapshots.asyncutils import run_in_executor
+from k8s_snapshots.asyncutils import run_in_executor, combine_latest, debounce
 from k8s_snapshots.context import Context
 from k8s_snapshots.rule import Rule, get_backend_for_rule
 from .backends.abstract import Snapshot, NewSnapshotIdentifier, SnapshotStatus
@@ -33,7 +33,7 @@ async def expire_snapshots(ctx, rule: Rule):
     backend = get_backend_for_rule(ctx, rule)
 
     snapshots_objects = filter_snapshots_by_rule(
-        await load_snapshots(ctx, backend), rule)
+        await load_snapshots(ctx, [backend]), rule)
     snapshots_with_date = {s: s.created_at for s in snapshots_objects}
 
     to_keep = expire(snapshots_with_date, rule.deltas)
@@ -305,23 +305,41 @@ async def get_snapshot_status(
     )
 
 
-async def get_snapshots(ctx: Context, backend, reload_trigger):
-    """Query the existing snapshots from the cloud provider.
+async def get_snapshots(ctx: Context, rulesgen, reload_trigger):
+    """Query the existing snapshots from the cloud provider backend(s).
+
+    "rules" are all the disk rules we know about, and through it, we know
+    the set of backends that are in play, and that need to verified.
 
     If the channel "reload_trigger" contains any value, we
     refresh the list of snapshots. This will then cause the
     next backup to be scheduled.
     """
-    yield await load_snapshots(ctx, backend)
-    async for _ in reload_trigger:
-        yield await load_snapshots(ctx, backend)
-
-
-async def load_snapshots(ctx: Context, backend: Any) -> List[Snapshot]:
-    snapshot_label_filters = dict([snapshot_author_label(ctx)])
-    return await run_in_executor(
-        lambda: backend.load_snapshots(ctx, snapshot_label_filters)
+    
+    combined = combine_latest(
+        rules=debounce(rulesgen, 4),
+        reload=reload_trigger
     )
+
+    async for item in combined:
+        # Figure out a se of backends that are in use with the rules
+        backends = set()
+        for rule in item['rules']:
+            backends.add(get_backend_for_rule(ctx, rule))
+
+        # Load and yield the snapshots for the set of backends.
+        yield await load_snapshots(ctx, backends)
+
+
+async def load_snapshots(ctx: Context, backends: Set[Any]) -> List[Snapshot]:
+    snapshot_label_filters = dict([snapshot_author_label(ctx)])
+
+    tasks = map(lambda backend: run_in_executor(
+        lambda: backend.load_snapshots(ctx, snapshot_label_filters)
+    ), backends)
+
+    snapshot_results = await asyncio.gather(*tasks)
+    return [snapshot for result in snapshot_results for snapshot in result]
 
 
 def determine_next_snapshot(snapshots, rules):

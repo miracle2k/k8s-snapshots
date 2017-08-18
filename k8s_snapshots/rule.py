@@ -67,9 +67,7 @@ class Rule(Loggable):
 
 
 def get_backend_for_rule(ctx: Context, rule: Rule):
-    if rule.backend:
-        return get_backend(rule.backend)
-    return ctx.get_backend()
+    return get_backend(rule.backend)
 
 
 def rule_name_from_k8s_source(
