@@ -25,7 +25,6 @@ Let's run *k8s-snapshots* in your cluster:
 
 
 ```bash
-export GCLOUD_PROJCECT_NAME=rude-rastafari
 cat <<EOF | kubectl create -f -
 apiVersion: extensions/v1beta1
 kind: Deployment
@@ -256,4 +255,4 @@ the way you need it. If we can find credentials for Google Cloud
 or Kubernetes, they will be used automatically. If so, the following
 command should work for you:
 
-    $ GCLOUD_PROJECT=handy-hexagon python -m k8s_snapshots
+    $ python -m k8s_snapshots
