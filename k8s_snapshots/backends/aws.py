@@ -1,11 +1,12 @@
 from typing import Dict, List, NamedTuple
 import pykube.objects
+import requests
 import pendulum
 from urllib.parse import urlparse
 from boto import ec2
 from ..context import Context
 from k8s_snapshots.snapshot import Snapshot
-from .abstract import NewSnapshotIdentifier, DiskIdentifier, SnapshotStatus
+from .abstract import NewSnapshotIdentifier, SnapshotStatus
 from ..errors import SnapshotCreateError
 
 
@@ -25,6 +26,13 @@ def supports_volume(volume: pykube.objects.PersistentVolume):
 class AWSDiskIdentifier(NamedTuple):
     region: str
     volume_id: str
+
+
+def get_current_region():
+    """Get the current region from the metadata service.
+    """
+    zone = requests.get('http://169.254.169.254/latest/meta-data/placement/availability-zone')
+    return zone[:-1]
 
 
 def get_disk_identifier(volume: pykube.objects.PersistentVolume):
@@ -47,8 +55,7 @@ def parse_timestamp(date_str: str) -> pendulum.Pendulum:
 # it relies less on the DiskIdentifier object always matching.
 #filters={'volume-id': volume.id}
 def load_snapshots(ctx: Context, label_filters: Dict[str, str]) -> List[Snapshot]:
-    # XXX: Which region to use?
-    connection = get_connection(ctx, region='eu-west-1')
+    connection = get_connection(ctx, region=get_current_region())
     
     snapshots = connection.get_all_snapshots(
         owner='self',

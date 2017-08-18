@@ -1,6 +1,7 @@
 import json
 import pendulum
 import re
+import requests
 from typing import List, Dict, NamedTuple
 from googleapiclient import discovery
 from oauth2client.service_account import ServiceAccountCredentials
@@ -31,6 +32,19 @@ GOOGLE_SNAPSHOT_NAME_REGEX = r'^(?:[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?)$'
 #: The regex that a label key and value has to match, additionally it has to be
 #: lowercase, this is checked with str().islower()
 GOOGLE_LABEL_REGEX = r'^(?:[-\w]{0,63})$'
+
+
+def get_project_id(ctx: Context):
+    if not ctx.config['gcloud_project']:
+        response = requests.get(
+            'http://metadata.google.internal/computeMetadata/v1/project/project-id',
+            headers={
+                'Metadata-Flavor': 'Google'
+            })
+        response.raise_for_status()
+        ctx.config['gcloud_project'] = response.text
+
+    return ctx.config['gcloud_project']
 
 
 def validate_config(config):
@@ -132,7 +146,7 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
     Return the existing snapshots.
     """
     resp = get_gcloud(ctx).snapshots().list(
-        project=ctx.config['gcloud_project'],
+        project=get_project_id(ctx),
         filter=snapshot_list_filter_expr(label_filters),
     ).execute()
 
@@ -173,7 +187,7 @@ def create_snapshot(
     # https://cloud.google.com/compute/docs/reference/latest/disks/createSnapshot#response
     operation = gcloud.disks().createSnapshot(
         disk=disk.name,
-        project=ctx.config['gcloud_project'],
+        project=get_project_id(ctx),
         zone=disk.zone,
         body=request_body
     ).execute()
@@ -205,7 +219,7 @@ def get_snapshot_status(
     
     # First, check the operation state
     operation = gcloud.zoneOperations().get(
-        project=ctx.config['gcloud_project'],
+        project=get_project_id(ctx),
         zone=snapshot_identifier['zone'],
         operation=snapshot_identifier['operation_name']
     ).execute()
@@ -218,7 +232,7 @@ def get_snapshot_status(
     # To be sure, check the state of the snapshot itself
     snapshot = gcloud.snapshots().get(
         snapshot=snapshot_identifier['snapshot_name'],
-        project=ctx.config['gcloud_project']
+        project=get_project_id(ctx)
     ).execute()
 
     status = snapshot['status']
@@ -243,7 +257,7 @@ def set_snapshot_labels(
 
     snapshot = gcloud.snapshots().get(
         snapshot=snapshot_identifier['snapshot_name'],
-        project=ctx.config['gcloud_project']
+        project=get_project_id(ctx)
     ).execute()
     
     body = {
@@ -252,7 +266,7 @@ def set_snapshot_labels(
     }
     return gcloud.snapshots().setLabels(
         resource=snapshot_identifier['snapshot_name'],
-        project=ctx.config['gcloud_project'],
+        project=get_project_id(ctx),
         body=body,
     ).execute()
 
@@ -264,7 +278,7 @@ def delete_snapshot(
     gcloud = get_gcloud(ctx)
     return gcloud.snapshots().delete(
         snapshot=snapshot.name,
-        project=ctx.config['gcloud_project']
+        project=get_project_id(ctx)
     ).execute()
 
 
