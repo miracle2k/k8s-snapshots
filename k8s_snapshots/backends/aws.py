@@ -28,11 +28,18 @@ class AWSDiskIdentifier(NamedTuple):
     volume_id: str
 
 
-def get_current_region():
+def get_current_region(ctx):
     """Get the current region from the metadata service.
     """
-    zone = requests.get('http://169.254.169.254/latest/meta-data/placement/availability-zone')
-    return zone[:-1]
+    if not ctx.config['aws_region']:
+        response = requests.get(
+            'http://169.254.169.254/latest/meta-data/placement/availability-zone',
+            timeout=5)
+        response.raise_for_status()
+        ctx.config['aws_region'] = response.text[:-1]
+
+    return ctx.config['aws_region']
+
 
 
 def get_disk_identifier(volume: pykube.objects.PersistentVolume):
@@ -55,7 +62,7 @@ def parse_timestamp(date_str: str) -> pendulum.Pendulum:
 # it relies less on the DiskIdentifier object always matching.
 #filters={'volume-id': volume.id}
 def load_snapshots(ctx: Context, label_filters: Dict[str, str]) -> List[Snapshot]:
-    connection = get_connection(ctx, region=get_current_region())
+    connection = get_connection(ctx, region=get_current_region(ctx))
     
     snapshots = connection.get_all_snapshots(
         owner='self',

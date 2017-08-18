@@ -33,6 +33,8 @@ DEFAULT_CONFIG = {
     'gcloud_project': '',
     'gcloud_json_keyfile_name': '',
     'gcloud_json_keyfile_string': '',
+
+    'aws_region': ''
 }
 
 

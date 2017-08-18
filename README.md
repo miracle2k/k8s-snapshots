@@ -167,6 +167,9 @@ access scope, you may need to configure these.
 
 Currently, we will try to connect with the default credentials.
 
+The region is usually detected via the meta data service. If that is not
+the case, you can set `AWS_REGION`.
+
 
 ### Pinging a third party service
 
