@@ -222,7 +222,7 @@ async def watch_schedule(ctx, trigger, *, loop=None):
     # TODO: For now, we load the snapshots of a fixed backend, either AWS,
     # or Google, or whatever is globally configured. But in theory different
     # rules could have different backends, so "get_snapshots" would actually
-    # need to have a  look at the rules itself, and check the snapshots of
+    # need to have a look at the rules itself, and check the snapshots of
     # every applicable rule.
     backend = ctx.get_backend()
     snapgen = get_snapshots(ctx, backend, trigger)
