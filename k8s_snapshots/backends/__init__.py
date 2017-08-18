@@ -26,3 +26,5 @@ def find_backend_for_volume(volume: pykube.objects.PersistentVolume):
         if backend.supports_volume(volume):
             return name, backend
 
+    return None, None
+
