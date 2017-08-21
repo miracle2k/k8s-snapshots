@@ -5,9 +5,7 @@ backup expiration logic is already in tarsnapper and well tested.
 TODO: prevent a backup loop: A failsafe mechanism to make sure we
   don't create more than x snapshots per disk; in case something
   is wrong with the code that loads the exsting snapshots from GCloud.
-TODO: Support http ping after every backup.
 TODO: Support loading configuration from a configmap.
-TODO: We could use a third party resource type, too.
 """
 import asyncio
 from typing import Union
