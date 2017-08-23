@@ -1,0 +1,10 @@
+apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
+kind: SnapshotRule
+metadata:
+  name: mysql
+spec:
+  deltas: P1D P30D
+  backend: google
+  disk:
+     name: my-mysql-disk
+     zone: europe-west1-c

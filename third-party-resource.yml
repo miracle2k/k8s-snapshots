@@ -1,0 +1,7 @@
+apiVersion: extensions/v1beta1
+kind: ThirdPartyResource
+metadata:
+  name: snapshot-rule.k8s-snapshots.elsdoerfer.com
+description: "Defines snapshot management rules for a disk."
+versions:
+- name: v1

@@ -1,0 +1,10 @@
+apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
+kind: SnapshotRule
+metadata:
+  name: mysql
+spec:
+  deltas: P1D P30D
+  backend: aws
+  disk:
+     region: eu-west-1
+     volumeId: vol-0aa6f44aad0daf9f2

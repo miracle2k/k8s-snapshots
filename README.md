@@ -196,30 +196,71 @@ will instead use the name that you give to your
 ``PersistentVolumeClaim``.
 
 
-### Manual backups
+### Manual snapshot rules
 
-<table>
-  <tr>
-    <td>VOLUMES</td>
-    <td>
-      Comma-separated list of volumes to backup. This allows you to
-      manually specify volumes you want to create snapshots for; useful
-      for volumes you are using without a PersistentVolume.
-    </td>
-  </tr>
-  <tr>
-    <td>VOLUME_{NAME}_DELTAS</td>
-    <td>
-      The deltas for this volume.
-    </td>
-  </tr>
-  <tr>
-    <td>VOLUME_{NAME}_ZONE</td>
-    <td>
-      The zone for this volume.
-    </td>
-  </tr>
-</table>
+It's possible to ask *k8s-snapshots* to create snapshots of volumes
+for which no `PersistentVolume` object exists within the Kubernetes
+cluster. For example, you might have a volume at your Cloud provider
+that you use within Kubernetes by referencing it directly.
+
+To do this, we use a custom Kubernetes resource, `SnapshotRule`.
+
+First, you need to create this custom resource.
+
+On Kubernetes 1.7 and higher:
+
+```
+cat <<EOF | kubectl create -f -
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: snapshotrules.k8s-snapshots.elsdoerfer.com
+spec:
+  group: k8s-snapshots.elsdoerfer.com
+  version: v1
+  scope: Namespaced
+  names:
+    plural: snapshotrules
+    singular: snapshotrule
+    kind: SnapshotRule
+    shortNames:
+    - sr
+```
+
+Or on Kubernetes 1.6 and lower:
+
+```
+cat <<EOF | kubectl create -f -
+apiVersion: extensions/v1beta1
+kind: ThirdPartyResource
+metadata:
+  name: snapshot-rule.k8s-snapshots.elsdoerfer.com
+description: "Defines snapshot management rules for a disk."
+versions:
+- name: v1
+EOF
+```
+
+You can then create `SnapshotRule` resources:
+
+```
+cat <<EOF | kubectl create -f -
+apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
+kind: SnapshotRule
+metadata:
+  name: mysql
+spec:
+  deltas: P1D P30D
+  backend: aws
+  disk:
+     region: test
+     volumeId: asdf
+EOF
+```
+
+This is an example for backing up an EBS disk on the Amazon cloud. The
+`disk` option requires different keys, depending on the backend. See
+the [examples folder](https://github.com/miracle2k/k8s-snapshots/tree/master/k8s_snapshots/backends).
 
 
 ### Other environment variables
