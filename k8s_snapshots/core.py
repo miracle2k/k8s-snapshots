@@ -149,7 +149,7 @@ async def rule_from_resource(
         disk = resource.obj.get('spec', {}).get('disk')
         try:
             disk = backend.validate_disk_identifier(disk)
-        except:
+        except ValueError:
             _log.exception(
                 'rule.invalid',
                 key_hints=['volume.metadata.name'],

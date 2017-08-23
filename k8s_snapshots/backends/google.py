@@ -126,7 +126,7 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskId
         raise UnsupportedVolume('cannot find the zone of the disk')
 
     return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_zone)
-    
+
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
     provisioner = volume.annotations.get('pv.kubernetes.io/provisioned-by')
@@ -135,6 +135,20 @@ def supports_volume(volume: pykube.objects.PersistentVolume):
 
 def parse_timestamp(date_str: str) -> pendulum.Pendulum:
     return pendulum.parse(date_str).in_timezone('utc')
+
+
+def validate_disk_identifier(disk_id: Dict) -> DiskIdentifier:
+    """Should take the user-specified dictionary, and convert it to
+    it's own, local `DiskIdentifier`. If the disk_id is not valid,
+    it should raise a `ValueError` with a suitable error message.
+    """
+    try:
+        return GoogleDiskIdentifier(
+            zone=disk_id['zone'],
+            name=disk_id['name']
+        )
+    except:
+        raise ValueError(disk_id)
 
 
 def snapshot_list_filter_expr(label_filters: Dict[str, str]) -> str:

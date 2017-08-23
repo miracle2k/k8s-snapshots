@@ -10,7 +10,9 @@ class SnapshotStatus(enum.Enum):
     COMPLETE = 'snapshot.complete'
 
 
-# It's up to a backend to decide how a disk should be identified
+# It's up to a backend to decide how a disk should be identified.
+# However, it does need to be something that is hashable, ideally
+# a tuple.
 DiskIdentifier = Any
 
 
@@ -29,6 +31,14 @@ class Snapshot(NamedTuple):
 # cloud as it's being created. This is distinct from :class:`Snapshot`, which
 # represents a completed snapshot.
 NewSnapshotIdentifier = Any
+
+
+def validate_disk_identifier(disk_id: Dict) -> DiskIdentifier:
+    """Should take the user-specified dictionary, and convert it to
+    it's own, local `DiskIdentifier`. If the disk_id is not valid,
+    it should raise a `ValueError` with a suitable error message.
+    """
+    raise NotImplementedError()
 
 
 def load_snapshots(ctx: Context, label_filters: Dict[str, str]) -> List[Snapshot]:
