@@ -315,7 +315,7 @@ async def get_snapshots(ctx: Context, rulesgen, reload_trigger):
     refresh the list of snapshots. This will then cause the
     next backup to be scheduled.
     """
-    
+
     combined = combine_latest(
         rules=debounce(rulesgen, 4),
         reload=reload_trigger
@@ -382,7 +382,7 @@ def determine_next_snapshot(snapshots, rules):
             key_hints=['rule.name', 'target'],
             target=next_timestamp,
             rule=next_rule,
-            times=next_snapshot_times
+            times=list(map(lambda t: str(t), next_snapshot_times))
         )
 
     return next_rule, next_timestamp

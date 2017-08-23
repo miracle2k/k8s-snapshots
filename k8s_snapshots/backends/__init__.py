@@ -1,5 +1,6 @@
 from importlib import import_module
 import pykube.objects
+from ..errors import ConfigurationError
 
 
 BACKENDS = ['google', 'aws']
@@ -15,7 +16,10 @@ def get_backends():
 
 
 def get_backend(name: str):
-    return import_module('k8s_snapshots.backends.%s' % name)
+    try:
+        return import_module('k8s_snapshots.backends.%s' % name)
+    except ImportError as e:
+        raise ConfigurationError(f'No such backed: "{name}"', error=e)
 
 
 def find_backend_for_volume(volume: pykube.objects.PersistentVolume):

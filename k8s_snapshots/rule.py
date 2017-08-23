@@ -14,6 +14,7 @@ from k8s_snapshots.errors import (
     AnnotationError,
     DeltasParseError
 )
+from k8s_snapshots.kube import SnapshotRule
 from k8s_snapshots.logging import Loggable
 from k8s_snapshots.backends import find_backend_for_volume, get_backend
 from k8s_snapshots.backends.abstract import DiskIdentifier
@@ -73,13 +74,19 @@ def get_backend_for_rule(ctx: Context, rule: Rule):
 def rule_name_from_k8s_source(
         source: Union[
             pykube.objects.PersistentVolumeClaim,
-            pykube.objects.PersistentVolume
+            pykube.objects.PersistentVolume,
+            SnapshotRule
         ],
         name: str = False
 ) -> str:
+    """Generates a name for a rule based on a kubernetes resource,
+    will consider:
+    """
+
     short_kind = {
         'PersistentVolume': 'pv',
         'PersistentVolumeClaim': 'pvc',
+        'SnapshotRule': 'rule'
     }.pop(source.kind)
 
     source_namespace = source.namespace
@@ -160,11 +167,12 @@ async def rule_from_pv(
     deltas_annotation_key: str,
     use_claim_name: bool=False,
 ) -> Rule:
-    """Given a persistent volume object, create a backup role
+    """Given a persistent volume object, create a backup rule
     object. Can return None if this volume is not configured for
     backups, or is not suitable.
 
-    Parameters
+    The configuration for the rule will either come from the volume,
+    or it's claim, if one is associated.
 
     `use_claim_name` - if the persistent volume is bound, and it's
     name is auto-generated, then prefer to use the name of the claim
@@ -187,51 +195,11 @@ async def rule_from_pv(
         _log.debug('Volume supported by backend',
                    volume=volume, backend=backend_module, disk=disk)
 
-    def get_deltas(annotations: Dict) -> List[timedelta]:
-        """
-        Helper annotation-deltas-getter
-
-        Parameters
-        ----------
-        annotations
-
-        Returns
-        -------
-
-        """
-        try:
-            deltas_str = annotations[deltas_annotation_key]
-        except KeyError as exc:
-            raise AnnotationNotFound(
-                'No such annotation key',
-                key=deltas_annotation_key
-            ) from exc
-
-        if not deltas_str:
-            raise AnnotationError('Invalid delta string', deltas_str=deltas_str)
-
-        try:
-            deltas = parse_deltas(deltas_str)
-        except DeltasParseError as exc:
-            raise AnnotationError(
-                'Invalid delta string',
-                deltas_str=deltas_str
-            ) from exc
-
-        if deltas is None or not deltas:
-            raise AnnotationError(
-                'parse_deltas returned invalid deltas',
-                deltas_str=deltas_str,
-                deltas=deltas,
-            )
-
-        return deltas
-
     claim_ref = volume.obj['spec'].get('claimRef')
 
     try:
         _log.debug('Checking volume for deltas')
-        deltas = get_deltas(volume.annotations)
+        deltas = get_deltas(volume.annotations, deltas_annotation_key)
         return Rule.from_volume(volume, backend_name, disk=disk,
             source=volume, deltas=deltas, use_claim_name=use_claim_name)
     except AnnotationNotFound:
@@ -253,7 +221,7 @@ async def rule_from_pv(
 
     try:
         _log.debug('Checking volume claim for deltas')
-        deltas = get_deltas(volume_claim.annotations)
+        deltas = get_deltas(volume_claim.annotations, deltas_annotation_key)
         return Rule.from_volume(volume, backend_name, disk=disk,
             source=volume_claim, deltas=deltas, use_claim_name=use_claim_name)
     except AnnotationNotFound as exc:
@@ -261,3 +229,43 @@ async def rule_from_pv(
             'No deltas found via volume claim'
         ) from exc
 
+
+def get_deltas(annotations: Dict, deltas_annotation_key: str) -> List[timedelta]:
+    """
+    Helper annotation-deltas-getter
+
+    Parameters
+    ----------
+    annotations
+
+    Returns
+    -------
+
+    """
+    try:
+        deltas_str = annotations[deltas_annotation_key]
+    except KeyError as exc:
+        raise AnnotationNotFound(
+            'No such annotation key',
+            key=deltas_annotation_key
+        ) from exc
+
+    if not deltas_str:
+        raise AnnotationError('Invalid delta string', deltas_str=deltas_str)
+
+    try:
+        deltas = parse_deltas(deltas_str)
+    except DeltasParseError as exc:
+        raise AnnotationError(
+            'Invalid delta string',
+            deltas_str=deltas_str
+        ) from exc
+
+    if deltas is None or not deltas:
+        raise AnnotationError(
+            'parse_deltas returned invalid deltas',
+            deltas_str=deltas_str,
+            deltas=deltas,
+        )
+
+    return deltas

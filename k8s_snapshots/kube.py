@@ -34,6 +34,12 @@ _WatchEvent = NamedTuple(
 )
 
 
+class SnapshotRule(pykube.objects.APIObject):
+    version = "k8s-snapshots.elsdoerfer.com/v1"
+    endpoint = "snapshotrules"
+    kind = "SnapshotRule"
+
+
 class Kubernetes:
     """
     Allows for easier mocking of Kubernetes resources.
@@ -77,7 +83,8 @@ class Kubernetes:
         """
         Sync wrapper for :any:`pykube.query.Query().watch().object_stream()`
         """
-        return resource_type.objects(self.client_factory()).watch().object_stream()
+        return resource_type.objects(self.client_factory())\
+            .filter(namespace=pykube.all).watch().object_stream()
 
 
 def get_resource_or_none_sync(
@@ -131,12 +138,14 @@ async def watch_resources(
         resource_type: Resource,
         *,
         delay: int,
+        allow_missing: bool = False,
         loop=None
 ) -> AsyncGenerator[_WatchEvent, None]:
     """ Asynchronously watch Kubernetes resources """
     async_gen = _watch_resources_thread_wrapper(
         ctx.kube_client,
         resource_type,
+        allow_missing=allow_missing,
         loop=loop
     )
 
@@ -151,6 +160,7 @@ async def watch_resources(
 async def _watch_resources_thread_wrapper(
         client_factory: Callable[[], pykube.HTTPClient],
         resource_type: Type[Resource],
+        allow_missing: bool = False,
         *,
         loop=None
 ) -> AsyncGenerator[_WatchEvent, None]:
@@ -171,6 +181,15 @@ async def _watch_resources_thread_wrapper(
             for event in sync_iterator:
                 # only put_nowait seems to cause SIGSEGV
                 loop.call_soon_threadsafe(channel.put_nowait, event)
+        except pykube.exceptions.HTTPError as e:
+            # TODO: It's possible that the user creates the resource
+            # while we are already running. We should pick this up
+            # automatically, i.e. watch ThirdPartyResource, or just
+            # check every couple of seconds.
+            if e.code == 404 and allow_missing:
+                _log.info('watch-resources.worker.skipped')
+            else:
+                _log.exception('watch-resources.worker.error')
         except:
             _log.exception('watch-resources.worker.error')
         finally:

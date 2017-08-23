@@ -57,13 +57,22 @@ def parse_timestamp(date_str: str) -> pendulum.Pendulum:
     return pendulum.parse(date_str).in_timezone('utc')
 
 
+def validate_disk_identifier(disk_id: Dict):
+    try:
+        return AWSDiskIdentifier(
+            region=disk_id['region'],
+            volume_id=disk_id['volumeId']
+        )
+    except:
+        raise ValueError(disk_id)
+
 # AWS can filter by volume-id, which means we wouldn't have to match in Python.
 # In any case, it might be easier to let the backend handle the matching. Then
 # it relies less on the DiskIdentifier object always matching.
 #filters={'volume-id': volume.id}
 def load_snapshots(ctx: Context, label_filters: Dict[str, str]) -> List[Snapshot]:
     connection = get_connection(ctx, region=get_current_region(ctx))
-    
+
     snapshots = connection.get_all_snapshots(
         owner='self',
         filters={f'tag:{k}': v for k, v in label_filters.items()}

@@ -111,19 +111,22 @@ class StreamReader:
     def _ensure_running(self):
         if self._task:
             return
-        
+
         self._task = asyncio.ensure_future(self._iterate_task())
         def cb(task):
             if task.exception():
                 for channel in self.channels:
                     channel.close()
+                # Can we fail the channels here, propagate the
+                # exception to the readers?
+                raise task.exception()
         self._task.add_done_callback(cb)
 
     def _end(self):
         self._task.cancel()
 
     def iter(self):
-        # Return a new iterator
+        # Return a new channel that will receive all the events
         channel = Channel()
         self.channels.append(channel)
         self._ensure_running()
