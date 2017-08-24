@@ -39,14 +39,6 @@ KUBE_CONFIG = pykube.KubeConfig({
     KUBE_SAFETY_CHECK_CONFIG_KEY: 'I am present',
 })
 
-ANNOTATION_PROVISIONED_BY_VALUE = 'kubernetes.io/gce-pd'
-
-ANNOTATION_PROVISIONED_BY_KEY = 'pv.kubernetes.io/provisioned-by'
-
-ANNOTATION_PROVISIONED_BY = {
-    ANNOTATION_PROVISIONED_BY_KEY: ANNOTATION_PROVISIONED_BY_VALUE
-}
-
 LABEL_ZONE_VALUE = 'test-zone'
 
 LABEL_ZONE_KEY = 'failure-domain.beta.kubernetes.io/zone'
@@ -310,11 +302,6 @@ def make_volume_and_claim(
 @pytest.fixture
 def fx_volume_zone_label(request):
     return {LABEL_ZONE_KEY: LABEL_ZONE_VALUE}
-
-
-@pytest.fixture
-def fx_volume_annotation_provisioned_by(request) -> Dict[str, str]:
-    return {ANNOTATION_PROVISIONED_BY_KEY: ANNOTATION_PROVISIONED_BY_VALUE}
 
 
 @pytest.fixture

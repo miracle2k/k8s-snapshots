@@ -4,7 +4,7 @@ import pytest
 import pykube
 
 from k8s_snapshots import errors
-from k8s_snapshots.core import volume_from_resource
+from k8s_snapshots.core import volume_from_pvc
 from tests.fixtures import make_resource
 from tests.fixtures.kube import mock_kube
 
@@ -21,12 +21,6 @@ PV_RESOURCE = make_resource(
         'expected_volume_index',  # index in 'resources' for the expected volume
     ],
     [
-        pytest.param(
-            PV_RESOURCE,
-            [PV_RESOURCE],
-            0,
-            id='valid_from_volume'
-        ),
         pytest.param(
             make_resource(
                 pykube.objects.PersistentVolumeClaim,
@@ -84,28 +78,6 @@ PV_RESOURCE = make_resource(
                 raises=errors.VolumeNotFound,
                 strict=True,
             )
-        ),
-        pytest.param(
-            make_resource(
-                pykube.objects.Deployment,
-                'a-deployment-is-not-a-volume',
-                spec={
-                    'volumeName': 'test-pv'
-                }
-            ),
-            [
-                make_resource(
-                    pykube.objects.PersistentVolume,
-                    'test-pv'
-                )
-            ],
-            None,
-            id='invalid_resource_can_not_get_volume',
-            marks=pytest.mark.xfail(
-                reason='Invalid resource type',
-                raises=errors.VolumeNotFound,
-                strict=True,
-            )
         )
     ]
 )
@@ -119,7 +91,7 @@ def test_volume_from_resource(
 
     with mock_kube(resources):
         result = loop.run_until_complete(
-            volume_from_resource(
+            volume_from_pvc(
                 ctx=fx_context,
                 resource=resource,
             )

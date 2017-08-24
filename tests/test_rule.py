@@ -6,12 +6,10 @@ import pytest
 
 from k8s_snapshots import errors
 from k8s_snapshots.context import Context
-from k8s_snapshots.core import volume_from_resource
 from k8s_snapshots.rule import rule_from_pv, Rule, parse_deltas
 from tests.fixtures.kube import (
     mock_kube,
     make_volume_and_claim,
-    ANNOTATION_PROVISIONED_BY,
     make_resource,
     LABEL_ZONE,
     spec_gce_persistent_disk)
@@ -31,40 +29,27 @@ from tests.fixtures.kube import (
     ]
 )
 @pytest.mark.parametrize(
-    ['volume_zone_label', 'provisioner_annotation'],
+    ['volume_zone_label'],
     [
         pytest.param(
             LABEL_ZONE,
-            ANNOTATION_PROVISIONED_BY,
-            id='zone_label_present_annotation_provisioned_by_present'
+            id='zone_label_present'
         ),
         pytest.param(
             {},
-            ANNOTATION_PROVISIONED_BY,
-            id='zone_label_absent_annotation_provisioned_by_present',
+            id='zone_label_absent',
             marks=pytest.mark.xfail(
                 reason='Missing zone label',
                 raises=errors.UnsupportedVolume,
                 strict=True
             )
-        ),
-        pytest.param(
-            LABEL_ZONE,
-            {},
-            id='zone_label_present_annotation_provisioned_by_absent',
-            marks=pytest.mark.xfail(
-                reason='Missing provisioner annotation',
-                raises=errors.UnsupportedVolume,
-                strict=True,
-            )
-        ),
+        )
     ]
 )
 def test_rule_from_volume_with_claim(
         deltas_annotation_key,
         fx_deltas,
-        volume_zone_label,
-        provisioner_annotation,
+        volume_zone_label
 ):
     ctx = Context({
         'deltas_annotation_key': deltas_annotation_key
@@ -72,7 +57,6 @@ def test_rule_from_volume_with_claim(
 
     pv, pvc = make_volume_and_claim(
         ctx=ctx,
-        volume_annotations=provisioner_annotation,
         claim_annotations={
             ctx.config['deltas_annotation_key']: fx_deltas,
         },
@@ -103,23 +87,20 @@ def test_rule_from_volume_with_claim(
 @pytest.mark.parametrize(
     [
         'label_zone',
-        'annotation_provisioned_by',
         '_spec_gce_persistent_disk',
     ],
     [
         pytest.param(
             LABEL_ZONE,
-            ANNOTATION_PROVISIONED_BY,
             spec_gce_persistent_disk('test-pd'),
             id='valid'
         ),
         pytest.param(
             LABEL_ZONE,
-            None,
-            spec_gce_persistent_disk('test-pd'),
-            id='missing_annotation_provisioned_by',
+            {},
+            id='missing_disk_identifier',
             marks=pytest.mark.xfail(
-                reason='Missing provisioned-by annotation',
+                reason='Missing disk identifier',
                 raises=errors.UnsupportedVolume,
                 strict=True
             )
@@ -130,7 +111,6 @@ def test_rule_from_volume(
         fx_context: Context,
         fx_deltas: str,
         label_zone: Optional[Dict[str, str]],
-        annotation_provisioned_by: Optional[Dict[str, str]],
         _spec_gce_persistent_disk: Optional[Dict[str, Any]]
 ):
     annotations = {}
@@ -138,9 +118,6 @@ def test_rule_from_volume(
     annotations.update({
         fx_context.config['deltas_annotation_key']: fx_deltas,
     })
-
-    if annotation_provisioned_by is not None:
-        annotations.update(annotation_provisioned_by)
 
     labels = {}
 
@@ -189,7 +166,6 @@ def test_rule_name_from_pvc(fx_context, claim_namespace):
     source_pv = make_resource(
         pykube.objects.PersistentVolume,
         'source-pv',
-        annotations=ANNOTATION_PROVISIONED_BY,
         labels=LABEL_ZONE,
         spec={
             'claimRef': {
@@ -235,13 +211,11 @@ def test_rule_name_from_pvc(fx_context, claim_namespace):
 def test_rule_name_from_pv(
         fx_context,
         fx_volume_zone_label,
-        fx_volume_annotation_provisioned_by,
         fx_annotation_deltas,
 ):
     volume_name = 'source-pv'
 
     annotations = {}
-    annotations.update(fx_volume_annotation_provisioned_by)
     annotations.update(fx_annotation_deltas)
 
     source_pv = make_resource(
