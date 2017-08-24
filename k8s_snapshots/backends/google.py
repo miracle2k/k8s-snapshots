@@ -129,8 +129,7 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskId
 
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
-    provisioner = volume.annotations.get('pv.kubernetes.io/provisioned-by')
-    return provisioner == 'kubernetes.io/gce-pd'
+    return bool(volume.obj['spec'].get('gcePersistentDisk'))
 
 
 def parse_timestamp(date_str: str) -> pendulum.Pendulum:
