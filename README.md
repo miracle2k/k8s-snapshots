@@ -244,7 +244,7 @@ EOF
 You can then create `SnapshotRule` resources:
 
 ```
-cat <<EOF | kubectl create -f -
+cat <<EOF | kubectl apply -f -
 apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
 kind: SnapshotRule
 metadata:
@@ -253,14 +253,14 @@ spec:
   deltas: P1D P30D
   backend: aws
   disk:
-     region: test
-     volumeId: asdf
+     region: eu-west-1
+     volumeId: vol-0aa6f44aad0daf9f2
 EOF
 ```
 
 This is an example for backing up an EBS disk on the Amazon cloud. The
 `disk` option requires different keys, depending on the backend. See
-the [examples folder](https://github.com/miracle2k/k8s-snapshots/tree/master/k8s_snapshots/backends).
+the [examples folder](https://github.com/miracle2k/k8s-snapshots/tree/master/examples).
 
 
 ### Other environment variables
