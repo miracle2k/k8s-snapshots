@@ -1,3 +1,23 @@
+2.0.0 (2017-08-26)
+------------------
+
+Adds support for cloud backends.
+
+IMPORTANT BREAKING CHANGES
+
+- The VOLUMES options has been replaced by a custom SnapshotRule
+  resource. If you need to setup manual snapshot rules for disks not
+  based on a PersistentVolume resource, see the readme for instructions.
+
+Other changes
+
+- Support an AWS backend.
+- Improve GCE disk detection; now based on actual data data, not on a
+  provisioner label.
+- GLCOUD_PROJECT environment variable no longer required, is read from
+  instance metadata.
+
+
 1.0.1 (2017-08-16)
 ------------------
 
