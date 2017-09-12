@@ -43,15 +43,20 @@ def get_current_region(ctx):
 
 
 def get_disk_identifier(volume: pykube.objects.PersistentVolume):
-    # An url such as aws://eu-west-1a/vol-00292b2da3d4ed1e4
     volume_url = volume.obj['spec'].get('awsElasticBlockStore')['volumeID']
 
-    parts = urlparse(volume_url)
-    zone = parts.netloc
-    volume_id = parts.path[1:]
+    if volume_url.startswith('aws://'):
+        # An url such as aws://eu-west-1a/vol-00292b2da3d4ed1e4
+        parts = urlparse(volume_url)
+        zone = parts.netloc
+        volume_id = parts.path[1:]
 
-    return AWSDiskIdentifier(region=zone[:-1], volume_id=volume_id)
-
+        return AWSDiskIdentifier(region=zone[:-1], volume_id=volume_id)
+    else:
+        # Older versions of kube just put the volume id in the volume id field.
+        volume_id = volume_url
+        region = volume.obj['metadata']['labels']['failure-domain.beta.kubernetes.io/region']
+        return AWSDiskIdentifier(region=region, volume_id=volume_id)
 
 def parse_timestamp(date_str: str) -> pendulum.Pendulum:
     return pendulum.parse(date_str).in_timezone('utc')
