@@ -49,7 +49,7 @@ async def expire_snapshots(ctx, rule: Rule):
                 'snapshot_time_created',
             ]
         )
-        
+
         if snapshot in to_keep:
             _log_inner.debug(events.Expiration.KEPT)
             kept_snapshots.append(snapshot.name)
@@ -82,7 +82,7 @@ async def make_backup(ctx, rule):
     2. Wait until the snapshot is finished.
     3. Expire old snapshots
     """
-    
+
     backend = get_backend_for_rule(ctx, rule)
     snapshot_name = new_snapshot_name(ctx, rule)
 
@@ -90,6 +90,8 @@ async def make_backup(ctx, rule):
         snapshot_name=snapshot_name,
         rule=rule
     )
+
+    time_start = pendulum.now()
 
     try:
         snapshot_identifier = await create_snapshot(
@@ -128,11 +130,18 @@ async def make_backup(ctx, rule):
         snapshot_identifier,
         snapshot_labels(ctx),
     )
+    time_taken = pendulum.now() - time_start
 
     _log.info(
         events.Snapshot.CREATED,
         snapshot_identifier=snapshot_identifier,
-        key_hints=['snapshot_name', 'rule.name'],
+        time_taken=time_taken,
+        time_taken_seconds=time_taken.total_seconds(),
+        key_hints=[
+            'snapshot_name',
+            'rule.name',
+            'time_taken_seconds'
+        ],
     )
 
     ping_url = ctx.config.get('ping_url')
@@ -209,7 +218,7 @@ async def poll_for_status(
 
     while True:
         await asyncio.sleep(sleep_time)  # Sleep first
-        
+
         result = refresh_func()
         if inspect.isawaitable(result):
             result = await result
@@ -265,7 +274,7 @@ async def set_snapshot_labels(
         snapshot_identifier=snapshot_identifier,
         labels=labels,
     )
-        
+
     _log.debug(
         'snapshot.set-labels',
         key_hints=['body.labels']
