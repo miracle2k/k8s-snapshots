@@ -91,6 +91,8 @@ async def make_backup(ctx, rule):
         rule=rule
     )
 
+    time_start = pendulum.now()
+
     try:
         snapshot_identifier = await create_snapshot(
             ctx,
@@ -132,6 +134,7 @@ async def make_backup(ctx, rule):
     _log.info(
         events.Snapshot.CREATED,
         snapshot_identifier=snapshot_identifier,
+        time_taken=pendulum.now() - time_start,
         key_hints=['snapshot_name', 'rule.name'],
     )
 
