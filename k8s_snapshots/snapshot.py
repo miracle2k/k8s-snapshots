@@ -49,7 +49,7 @@ async def expire_snapshots(ctx, rule: Rule):
                 'snapshot_time_created',
             ]
         )
-        
+
         if snapshot in to_keep:
             _log_inner.debug(events.Expiration.KEPT)
             kept_snapshots.append(snapshot.name)
@@ -82,7 +82,7 @@ async def make_backup(ctx, rule):
     2. Wait until the snapshot is finished.
     3. Expire old snapshots
     """
-    
+
     backend = get_backend_for_rule(ctx, rule)
     snapshot_name = new_snapshot_name(ctx, rule)
 
@@ -209,7 +209,7 @@ async def poll_for_status(
 
     while True:
         await asyncio.sleep(sleep_time)  # Sleep first
-        
+
         result = refresh_func()
         if inspect.isawaitable(result):
             result = await result
@@ -265,7 +265,7 @@ async def set_snapshot_labels(
         snapshot_identifier=snapshot_identifier,
         labels=labels,
     )
-        
+
     _log.debug(
         'snapshot.set-labels',
         key_hints=['body.labels']
