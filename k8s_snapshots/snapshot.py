@@ -130,12 +130,18 @@ async def make_backup(ctx, rule):
         snapshot_identifier,
         snapshot_labels(ctx),
     )
+    time_taken = pendulum.now() - time_start
 
     _log.info(
         events.Snapshot.CREATED,
         snapshot_identifier=snapshot_identifier,
-        time_taken=pendulum.now() - time_start,
-        key_hints=['snapshot_name', 'rule.name'],
+        time_taken=time_taken,
+        time_taken_seconds=time_taken.total_seconds(),
+        key_hints=[
+            'snapshot_name',
+            'rule.name',
+            'time_taken_seconds'
+        ],
     )
 
     ping_url = ctx.config.get('ping_url')
