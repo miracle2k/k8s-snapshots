@@ -57,6 +57,35 @@ given, it will create a daily snapshot of the volume. It will keep
 snapshot. If the daemon is not running for a while, it will still
 try to approximate your desired snapshot scheme as closely as possible.
 
+### A tip for kops users
+
+*k8s-snapshots* need EBS and S3 permissions to take and save snapshots. Under
+the [kops](https://github.com/kubernetes/kops/) IAM Role scheme, only Masters
+have these permissions. The easiest solution is to run k8s-snapshots on
+Masters.
+
+To run on a Master, we need to:
+   * [Overcome a Taint](https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/)
+   * [Specify that we require a Master](https://kubernetes.io/docs/concepts/configuration/assign-pod-node/)
+
+To do this, add the following to the above manifest for the k8s-snapshots
+Deployment:
+
+```
+spec:
+  ...
+  template:
+  ...
+    spec:
+      ...
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        operator: "Equal"
+        value: ""
+        effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/role: master
+```
 
 How do the deltas work
 ----------------------
