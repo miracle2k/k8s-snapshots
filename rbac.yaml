@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app: k8s-snapshots
+  name: k8s-snapshots
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app: k8s-snapshots
+  name: k8s-snapshots
+  namespace: kube-system
+rules:
+  - apiGroups:
+      - "k8s-snapshots.elsdoerfer.com"
+    resources:
+      - snapshotrules
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+      - pods
+      - persistentvolumeclaims
+      - persistentvolumes
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app: k8s-snapshots
+  name: k8s-snapshots
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-snapshots
+subjects:
+  - kind: ServiceAccount
+    name: k8s-snapshots
+    namespace: kube-system
+

@@ -123,7 +123,7 @@ has permissions to create snapshots. See below more more on the
 available configuration options.
 
 
-How do enable backups
+How to enable backups
 ---------------------
 
 To backup a volume, you should add an annotation with the name
@@ -199,6 +199,13 @@ Currently, we will try to connect with the default credentials.
 The region is usually detected via the meta data service. If that is not
 the case, you can set `AWS_REGION`.
 
+### For Role-based Access Control (RBAC) enabled clusters
+
+In kubernetes clusters with RBAC, the required permissions need to be provided to the `k8s-snapshots` pods to watch and list `persistentvolume` or `persistentvolumeclaims`.
+
+  ```
+    kubectl apply -f rbac.yaml
+  ```
 
 ### Pinging a third party service
 
