@@ -191,6 +191,16 @@ access scope, you may need to configure these.
   </tr>
 </table>
 
+When using a service account with a custom role to access the Google Cloud API, the following permissions are required:
+```
+compute.disks.createSnapshot
+compute.snapshots.create
+compute.snapshots.delete
+compute.snapshots.get
+compute.snapshots.list
+compute.snapshots.setLabels
+compute.zoneOperations.get
+```
 
 ### Configure access permissions on AWS.
 
