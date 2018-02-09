@@ -2,8 +2,8 @@ from typing import Dict, List, NamedTuple
 import pykube.objects
 import requests
 import pendulum
+import boto3
 from urllib.parse import urlparse
-from boto import ec2
 from ..context import Context
 from k8s_snapshots.snapshot import Snapshot
 from .abstract import NewSnapshotIdentifier, SnapshotStatus
@@ -58,8 +58,8 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume):
         region = volume.obj['metadata']['labels']['failure-domain.beta.kubernetes.io/region']
         return AWSDiskIdentifier(region=region, volume_id=volume_id)
 
-def parse_timestamp(date_str: str) -> pendulum.Pendulum:
-    return pendulum.parse(date_str).in_timezone('utc')
+def parse_timestamp(date) -> pendulum.Pendulum:
+    return pendulum.instance(date)
 
 
 def validate_disk_identifier(disk_id: Dict):
@@ -78,19 +78,19 @@ def validate_disk_identifier(disk_id: Dict):
 def load_snapshots(ctx: Context, label_filters: Dict[str, str]) -> List[Snapshot]:
     connection = get_connection(ctx, region=get_current_region(ctx))
 
-    snapshots = connection.get_all_snapshots(
-        owner='self',
-        filters={f'tag:{k}': v for k, v in label_filters.items()}
+    snapshots = connection.describe_snapshots(
+        OwnerIds=['self'],
+        Filters=[{'Name': f'tag:{k}', 'Values': [v]} for k, v in label_filters.items()]
     )
 
     return list(map(lambda snapshot: Snapshot(
-        name=snapshot.id,
-        created_at=parse_timestamp(snapshot.start_time),
+        name=snapshot['SnapshotId'],
+        created_at=parse_timestamp(snapshot['StartTime']),
         disk=AWSDiskIdentifier(
-            volume_id=snapshot.volume_id,
-            region=snapshot.region.name
+            volume_id=snapshot['VolumeId'],
+            region=ctx.config['aws_region']
         )
-    ), snapshots))
+    ), snapshots['Snapshots']))
 
 
 def create_snapshot(
@@ -105,13 +105,13 @@ def create_snapshot(
     # TODO: Seems like the API doesn't actually allow us to set a snapshot
     # name, although it's possible in the UI.
     snapshot = connection.create_snapshot(
-        disk.volume_id,
-        description=snapshot_name
+        VolumeId=disk.volume_id,
+        Description=snapshot_name
     )
     
     return {
-        'id': snapshot.id,
-        'region': snapshot.region.name
+        'id': snapshot['SnapshotId'],
+        'region': disk.region
     }
 
 
@@ -121,17 +121,17 @@ def get_snapshot_status(
 ) -> SnapshotStatus:
     connection = get_connection(ctx, snapshot_identifier['region'])
 
-    snapshots = connection.get_all_snapshots(
-        [snapshot_identifier['id']]
+    snapshots = connection.describe_snapshots(
+        SnapshotIds=[snapshot_identifier['id']]
     )
-    snapshot = snapshots[0]
+    snapshot = snapshots['Snapshots'][0]
     
     # Can be pending | completed | error
-    if snapshot.status == 'pending':
+    if snapshot['State'] == 'pending':
         return SnapshotStatus.PENDING
-    elif snapshot.status == 'completed':
+    elif snapshot['State'] == 'completed':
         return SnapshotStatus.COMPLETE
-    elif snapshot.status == 'error':
+    elif snapshot['State'] == 'error':
         raise SnapshotCreateError(snapshot['status'])
     else:
         raise NotImplementedError()
@@ -143,7 +143,10 @@ def set_snapshot_labels(
     labels: Dict
 ):
     connection = get_connection(ctx, snapshot_identifier['region'])
-    connection.create_tags([snapshot_identifier['id']], labels)
+    connection.create_tags(
+        Resources=[snapshot_identifier['id']],
+        Tags=[{'Key': k, 'Value': v} for k, v in labels.items()]
+    )
 
 
 def delete_snapshot(
@@ -151,9 +154,9 @@ def delete_snapshot(
     snapshot: Snapshot
 ):
     connection = get_connection(ctx, snapshot.disk.region)
-    connection.delete_snapshot(snapshot.name)
+    connection.delete_snapshot(SnapshotId=snapshot.name)
 
 
 def get_connection(ctx: Context, region):
-    connection = ec2.connect_to_region(region)
+    connection = boto3.client('ec2', region_name=region)
     return connection

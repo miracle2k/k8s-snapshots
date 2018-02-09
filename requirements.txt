@@ -11,4 +11,4 @@ isodate==0.5.4
 python-dateutil==2.6.0
 aiohttp==2.2.2
 aiostream==0.2.4
-boto==2.48.0
+boto3==1.5.25
