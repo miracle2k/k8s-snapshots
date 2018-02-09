@@ -113,13 +113,13 @@ The first delta is the backup interval.
 Running the daemon
 ------------------
 
-Use the example deploymet file given above to start off. If you run
+Use the example deployment file given above to start off. If you run
 the daemon on a Google Container Engine cluster, it should already
 have access to all the resources it needs.
 
 However, depending on your configuration, you may need to assign the
 correct RBAC rules, or give it access to a Google Cloud identity that
-has permissions to create snapshots. See below more more on the
+has permissions to create snapshots. See below for more on the
 available configuration options.
 
 
@@ -131,7 +131,7 @@ To backup a volume, you should add an annotation with the name
 `PersistentVolumeClaim` resources.
 
 Since ``PersistentVolumes`` are often created automatically for you
-by Kubernetes, it you may want to annotate the volume claim in your
+by Kubernetes, you may want to annotate the volume claim in your
 resource definition file. Alteratively, you can ``kubectl edit pv``
 a ``PersistentVolume`` created by Kubernetes and add the annotation.
 
@@ -139,7 +139,7 @@ The value of the annotation are a set of deltas that define how often
 a snapshot is created, and how many snapshots should be kept. See
 the section above for more information on how deltas work.
 
-In the end, you annotation may look like this:
+In the end, your annotation may look like this:
 
 ```
 backup.kubernetes.io/deltas: PT1H P2D P30D P180D
@@ -156,7 +156,7 @@ Configuration
 ### Configure access permissions to Google Cloud.
 
 If there are no default credentials to Kubernetes and the Cloud
-snapshot API, or the default credentials do not hae the required
+snapshot API, or the default credentials do not have the required
 access scope, you may need to configure these.
 
 <table>
@@ -191,6 +191,16 @@ access scope, you may need to configure these.
   </tr>
 </table>
 
+When using a service account with a custom role to access the Google Cloud API, the following permissions are required:
+```
+compute.disks.createSnapshot
+compute.snapshots.create
+compute.snapshots.delete
+compute.snapshots.get
+compute.snapshots.list
+compute.snapshots.setLabels
+compute.zoneOperations.get
+```
 
 ### Configure access permissions on AWS.
 
