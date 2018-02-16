@@ -160,24 +160,30 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
     """
     Return the existing snapshots.
     """
-    resp = get_gcloud(ctx).snapshots().list(
+    snapshots = get_gcloud(ctx).snapshots()
+    request = snapshots.list(
         project=get_project_id(ctx),
         filter=snapshot_list_filter_expr(label_filters),
-    ).execute()
+        maxResults=500,
+    )
 
-    snapshots = []
-    for item in resp.get('items', []):
-        # We got to parse out the disk zone and name from the source disk.
-        # It's an url that ends with '/zones/{zone}/disks/{name}'/
-        _, zone, _, disk = item['sourceDisk'].split('/')[-4:]
+    loaded_snapshots = []
 
-        snapshots.append(Snapshot(
-            name=item['name'],
-            created_at=parse_timestamp(item['creationTimestamp']),
-            disk=GoogleDiskIdentifier(zone=zone, name=disk)
-        ))
+    while request is not None:
+        resp = request.execute()
+        for item in resp.get('items', []):
+            # We got to parse out the disk zone and name from the source disk.
+            # It's an url that ends with '/zones/{zone}/disks/{name}'/
+            _, zone, _, disk = item['sourceDisk'].split('/')[-4:]
 
-    return snapshots
+            loaded_snapshots.append(Snapshot(
+                name=item['name'],
+                created_at=parse_timestamp(item['creationTimestamp']),
+                disk=GoogleDiskIdentifier(zone=zone, name=disk)
+            ))
+        request = snapshots.list_next(request, resp)
+
+    return loaded_snapshots
 
 
 def create_snapshot(
