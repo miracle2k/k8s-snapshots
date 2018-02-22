@@ -1,0 +1,24 @@
+apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
+kind: SnapshotRule
+metadata:
+  name: etcd-main
+  namespace: kube-system
+spec:
+  deltas: P1D P30D
+  backend: aws
+  disk:
+     region: eu-west-2
+     volumeId: vol-0c9f96dd263e10067
+
+---
+apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
+kind: SnapshotRule
+metadata:
+  name: etcd-events
+  namespace: kube-system
+spec:
+  deltas: P1D P30D
+  backend: aws
+  disk:
+     region: eu-west-2
+     volumeId: vol-070121e34012404fd

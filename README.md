@@ -309,6 +309,13 @@ This is an example for backing up an EBS disk on the Amazon cloud. The
 the [examples folder](https://github.com/miracle2k/k8s-snapshots/tree/master/examples).
 
 
+### Backing up the etcd volumes of a kops cluster
+
+After setting up the custom resource definitions (see previous section), use
+snapshot rules as defined in the `examples/backup-kops-etcd.yml` file. Reference
+the volume ids of your etcd volumes.
+
+
 ### Other environment variables
 
 <table>
