@@ -12,3 +12,4 @@ python-dateutil==2.6.0
 aiohttp==2.2.2
 aiostream==0.2.4
 boto3==1.5.25
+yarl==1.1.1
