@@ -48,7 +48,7 @@ Add a backup annotation to one of your persistent volumes:
 
 ```bash
 kubectl patch pv pvc-01f74065-8fe9-11e6-abdd-42010af00148 -p \
-  '{"metadata": {"annotations": {"backup.kubernetes.io/deltas": "PT1H P30D P360D"}}}'
+  '{"metadata": {"annotations": {"backup.kubernetes.io/deltas": "P1D P30D P360D"}}}'
 ```
 
 *k8s-snapshots* will now run in your cluster, and per the deltas
