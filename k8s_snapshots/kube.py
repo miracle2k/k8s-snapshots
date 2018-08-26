@@ -174,13 +174,16 @@ async def _watch_resources_thread_wrapper(
     def worker():
         try:
             _log.debug('watch-resources.worker.start')
-            sync_iterator = watch_resources_sync(
-                client_factory=client_factory,
-                resource_type=resource_type
-            )
-            for event in sync_iterator:
-                # only put_nowait seems to cause SIGSEGV
-                loop.call_soon_threadsafe(channel.put_nowait, event)
+            while True:
+                sync_iterator = watch_resources_sync(
+                    client_factory=client_factory,
+                    resource_type=resource_type
+                )
+                _log.debug('watch-resources.worker.watch-opened')
+                for event in sync_iterator:
+                    # only put_nowait seems to cause SIGSEGV
+                    loop.call_soon_threadsafe(channel.put_nowait, event)
+                _log.debug('watch-resources.worker.watch-closed')
         except pykube.exceptions.HTTPError as e:
             # TODO: It's possible that the user creates the resource
             # while we are already running. We should pick this up
