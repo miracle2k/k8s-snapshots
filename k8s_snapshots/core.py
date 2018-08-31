@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Written in asyncio as a learning experiment. Python because the
-backup expiration logic is already in tarsnapper and well tested.
-
+"""
 TODO: prevent a backup loop: A failsafe mechanism to make sure we
-  don't create more than x snapshots per disk; in case something
-  is wrong with the code that loads the exsting snapshots from GCloud.
+don't create more than x snapshots per disk; in case something
+is wrong with the code that loads the exsting snapshots from GCloud.
 """
 import asyncio
 from typing import Union
