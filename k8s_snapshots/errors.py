@@ -76,6 +76,10 @@ class DeltasParseError(StructuredError):
     pass
 
 
+class RuleDependsOn(StructuredError):
+    pass
+
+
 class VolumeNotFound(StructuredError):
     pass
 

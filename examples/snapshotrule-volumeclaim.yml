@@ -1,0 +1,7 @@
+apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
+kind: SnapshotRule
+metadata:
+  name: mysql
+spec:
+  deltas: P1D P30D
+  persistentVolumeClaim: my-mysql-disk

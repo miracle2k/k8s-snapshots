@@ -58,6 +58,7 @@ class Rule(EventEnum):
     """
     Events related to snapshot Rule()s.
     """
+    PENDING = 'rule.pending'
     ADDED_FROM_CONFIG = 'rule.from-config'
     ADDED = 'rule.added'
     UPDATED = 'rule.updated'

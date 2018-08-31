@@ -5,7 +5,7 @@ don't create more than x snapshots per disk; in case something
 is wrong with the code that loads the exsting snapshots from GCloud.
 """
 import asyncio
-from typing import Union
+from typing import List, AsyncIterable, Optional, Tuple, Dict
 
 import pendulum
 import pykube
@@ -23,15 +23,15 @@ from k8s_snapshots.errors import (
     UnsupportedVolume,
     VolumeNotFound,
     ConfigurationError,
-    DeltasParseError
-)
+    DeltasParseError,
+    RuleDependsOn)
 from k8s_snapshots.kube import (
     watch_resources,
     get_resource_or_none,
-    SnapshotRule
-)
+    SnapshotRule,
+    _WatchEvent)
 from k8s_snapshots.rule import (
-    rule_from_pv, Rule, parse_deltas, rule_name_from_k8s_source)
+    rule_from_pv, Rule, parse_deltas, rule_name_from_k8s_source, get_deltas)
 from k8s_snapshots.snapshot import (
     make_backup,
     get_snapshots,
@@ -45,7 +45,8 @@ async def volume_from_pvc(
         ctx: Context,
         resource: pykube.objects.PersistentVolumeClaim
 ) -> pykube.objects.PersistentVolume:
-    """Resolvse a volume claim to the associated volume.
+    """Given a `PersistentVolumeClaim`, return the `PersistentVolume`
+    it is bound to.
     """
     _log = _logger.new(resource=resource)
 
@@ -81,34 +82,59 @@ async def volume_from_pvc(
     return volume
 
 
-async def rule_from_resource(
+async def rule_from_snapshotrule(
     ctx: Context,
-    resource: Union[
-        pykube.objects.PersistentVolume,
-        pykube.objects.PersistentVolumeClaim,
-        SnapshotRule
-    ]
-) -> Rule:
-    """Given a Kubernetes resource, converts it to a snapshot `Rule`
-    instance, or returns None.
+    resource: SnapshotRule
+) -> Optional[Rule]:
+    """This tries to build a rule within a `SnapshotRule` resource -
+    the resource that we custom designed for this purpose.
 
-    How this process works, depends on the resource given.
+    This is invoked whenever Kubernetes tells us that such a resource
+    was created, deleted, or updated.
 
-    - If the resource is a volume, we read the disk and delta info
-      from there.
+    There are two separate ways a `SnapshotRule` can be used:
 
-    - If the resource is a volume claim, we look for the volume.
+    - A `SnapshotRule` resource can refer to a specific Cloud disk
+      id to be snapshotted, e.g. 'example-disk' on 'gcloud'. This
+      skips Kubernetes entirely.
 
-    - A `SnapshotRule` custom resource directly defines the disk.
+    - A `SnapshotRule` resource can refer to a `PersistentVolumeClaim`.
+      The disk this claim is bound to is the one we will snapshot.
+      Rather than defining the snapshot interval etc. as annotations
+      of the claim, they are defined here, in a separate resource.
     """
+    _log = _logger.new(resource=resource, rule=resource.obj)
 
-    _log = _logger.new(
-        resource=resource,
-    )
+    spec = resource.obj.get('spec', {})
 
-    if (isinstance(resource, SnapshotRule)):
-        # Validate the backen
-        backend_name = resource.obj.get('spec', {}).get('backend')
+    # Validate the deltas
+    try:
+        deltas_str = resource.obj.get('spec', {}).get('deltas')
+        try:
+            deltas = parse_deltas(deltas_str)
+        except DeltasParseError as exc:
+            raise AnnotationError(
+                'Invalid delta string',
+                deltas_str=deltas_str
+            ) from exc
+
+        if deltas is None or not deltas:
+            raise AnnotationError(
+                'parse_deltas returned invalid deltas',
+                deltas_str=deltas_str,
+                deltas=deltas,
+            )
+    except AnnotationError:
+        _log.exception(
+            'rule.invalid',
+            key_hints=['rule.metadata.name'],
+        )
+        return
+
+    # Refers to a disk from a cloud provider
+    if spec.get('disk'):
+        # Validate the backend
+        backend_name = spec.get('backend')
         try:
             backend = get_backend(backend_name)
         except ConfigurationError as e:
@@ -119,30 +145,6 @@ async def rule_from_resource(
             )
             return
 
-        # Validate the deltas
-        try:
-            deltas_str = resource.obj.get('spec', {}).get('deltas')
-            try:
-                deltas = parse_deltas(deltas_str)
-            except DeltasParseError as exc:
-                raise AnnotationError(
-                    'Invalid delta string',
-                    deltas_str=deltas_str
-                ) from exc
-
-            if deltas is None or not deltas:
-                raise AnnotationError(
-                    'parse_deltas returned invalid deltas',
-                    deltas_str=deltas_str,
-                    deltas=deltas,
-                )
-        except AnnotationError:
-            _log.exception(
-                'rule.invalid',
-                key_hints=['volume.metadata.name'],
-            )
-            return
-
         # Validate the disk identifier
         disk = resource.obj.get('spec', {}).get('disk')
         try:
@@ -150,7 +152,7 @@ async def rule_from_resource(
         except ValueError:
             _log.exception(
                 'rule.invalid',
-                key_hints=['volume.metadata.name'],
+                key_hints=['rule.metadata.name'],
             )
             return
 
@@ -162,23 +164,54 @@ async def rule_from_resource(
         )
         return rule
 
-    if isinstance(resource, pykube.objects.PersistentVolumeClaim):
-        try:
-            volume = await volume_from_pvc(ctx, resource)
-        except VolumeNotFound:
-            _log.exception(
-                events.Volume.NOT_FOUND,
-                key_hints=[
-                    'resource.metadata.name',
-                ],
+    # Refers to a volume claim
+    if spec.get('persistentVolumeClaim'):
+
+        # Find the claim
+        volume_claim = await get_resource_or_none(
+            ctx.kube_client,
+            pykube.objects.PersistentVolumeClaim,
+            spec.get('persistentVolumeClaim'),
+            namespace=resource.metadata['namespace']
+        )
+
+        if not volume_claim:
+            _log.warning(
+                events.Rule.PENDING,
+                reason='Volume claim does not exist',
+                key_hints=['rule.metadata.name'],
             )
-            return
+            raise RuleDependsOn(
+                'The volume claim targeted by this SnapshotRule does not exist yet',
+                kind='PersistentVolumeClaim',
+                namespace=resource.metadata['namespace'],
+                name=spec.get('persistentVolumeClaim')
+            )
 
-    elif isinstance(resource, pykube.objects.PersistentVolume):
-        volume = resource
+        # Find the volume
+        try:
+            volume = await volume_from_pvc(ctx, volume_claim)
+        except VolumeNotFound:
+            _log.warning(
+                events.Rule.PENDING,
+                reason='Volume claim is not bound',
+                key_hints=['rule.metadata.name'],
+            )
+            raise RuleDependsOn(
+                'The volume claim targeted by this SnapshotRule is not bound yet',
+                kind='PersistentVolumeClaim',
+                namespace=resource.metadata['namespace'],
+                name=spec.get('persistentVolumeClaim')
+            )
 
-    else:
-        raise RuntimeError(f'{resource} is not supported.')
+        return await rule_from_pv(ctx, volume, deltas, source=resource)
+
+
+async def rule_from_persistent_volume(
+    ctx: Context,
+    volume: pykube.objects.PersistentVolume
+) -> Optional[Rule]:
+    _log = _logger.new(resource=volume)
 
     volume_name = volume.name
     _log = _log.bind(
@@ -187,23 +220,25 @@ async def rule_from_resource(
     )
 
     try:
-        rule = await rule_from_pv(
-            ctx,
-            volume,
-            ctx.config.get('deltas_annotation_key'),
-            use_claim_name=ctx.config.get('use_claim_name'))
-        return rule
+        _log.debug('Checking volume for deltas')
+        deltas = get_deltas(volume.annotations,
+                            ctx.config.get('deltas_annotation_key'))
     except AnnotationNotFound as exc:
         _log.info(
             events.Annotation.NOT_FOUND,
             key_hints=['volume.metadata.name'],
             exc_info=exc,
         )
+        return
     except AnnotationError:
         _log.exception(
             events.Annotation.ERROR,
             key_hints=['volume.metadata.name'],
         )
+        return
+
+    try:
+        return await rule_from_pv(ctx, volume, deltas, source=volume)
     except UnsupportedVolume as exc:
         _log.info(
             events.Volume.UNSUPPORTED,
@@ -212,7 +247,57 @@ async def rule_from_resource(
         )
 
 
-async def rules_from_volumes(ctx):
+async def rule_from_persistent_volume_claim(
+    ctx: Context,
+    volume_claim: pykube.objects.PersistentVolumeClaim
+) -> Optional[Rule]:
+    """
+    If a `PersistentVolumeClaim` is annotated, we create a rule
+    based on those annotations, for the disk that the claim is bound to.
+
+    If the claim is currently unbound, we return `None`. We do not have
+    have to worry about being notified of any future binding, since
+    Kubernetes will update the `PersistentVolumeClaim` resource when
+    that happens, so we will see that update.
+    """
+    _log = _logger.new(resource=volume_claim, volume_claim=volume_claim.obj)
+
+    try:
+        _log.debug('Checking volume claim for deltas')
+        deltas = get_deltas(
+            volume_claim.annotations, ctx.config.get('deltas_annotation_key'))
+    except AnnotationNotFound as exc:
+        _log.exception(
+            events.Annotation.NOT_FOUND,
+            key_hints=['volume_claim.metadata.name'],
+        )
+        return
+    except AnnotationError:
+        _log.exception(
+            events.Annotation.ERROR,
+            key_hints=['volume_claim.metadata.name'],
+        )
+        return
+
+    try:
+        volume = await volume_from_pvc(ctx, volume_claim)
+    except VolumeNotFound:
+        _log.warning(
+            events.Rule.PENDING,
+            reason='Volume claim is not bound',
+            key_hints=['volume_claim.metadata.name'],
+        )
+        return
+
+    return await rule_from_pv(
+        ctx,
+        volume,
+        deltas=deltas,
+        source=volume_claim
+    )
+
+
+async def rules_from_kubernetes(ctx) -> AsyncIterable[List[Rule]]:
     """This generator continuously runs, watching Kubernetes for
     certain resources, consuming changes, and determining which
     snapshot rules have been defined.
@@ -222,7 +307,18 @@ async def rules_from_volumes(ctx):
     of rule objects replaces the previous one.
     """
 
+    # These are rules that we ready to "run".
     rules = {}
+
+    # These are resources that we know we have to recheck, because
+    # they will become rules pending a resource creation. For example:
+    # A `SnapshotRule` resource points to volume claim. However, this
+    # volume claim is not yet bound. Once Kubernetes creates the volume,
+    # we will notify us about creating a `PersistentVolume` and updating
+    # a `PersistentVolumeClaim`. It will not, however, send us an
+    # update for the `SnapshotRule` - where the rule is actually
+    # defined. We thus have to link the rule to the volume.
+    pending_rules: Dict[Tuple, pykube.objects.APIObject] = {}
 
     _logger.debug('volume-events.watch')
 
@@ -232,8 +328,10 @@ async def rules_from_volumes(ctx):
         watch_resources(ctx, SnapshotRule, delay=3, allow_missing=True)
     )
 
-    async with merged_stream.stream() as merged_events:
+    iterable: AsyncIterable[_WatchEvent] = merged_stream.stream()
+    async with iterable as merged_events:
         async for event in merged_events:
+
             _log = _logger.bind(
                 event_type=event.type,
                 event_object=event.object.obj,
@@ -246,51 +344,90 @@ async def rules_from_volumes(ctx):
                 ],
             )
 
-            rule = await rule_from_resource(ctx, event.object)
-            if not rule:
-                continue
-
-            _log = _log.bind(
-                rule=rule
-            )
-
+            # This is how we uniquely identify the rule. This is important
+            # such that when an object is deleted, we delete the correct
+            # rule.
             key_by = (
                 event.object.kind,
                 event.object.namespace,
                 event.object.name
             )
 
+            events_to_process = [
+                (event.type, key_by, event.object)
+            ]
 
-            if event.type == 'ADDED' or event.type == 'MODIFIED':
-                if rule:
-                    if event.type == 'ADDED' or key_by not in rules:
-                        _log.info(
-                            events.Rule.ADDED,
-                            key_hints=['rule.name']
-                        )
+            # Is there some other object that was depending on *this*
+            # object?
+            if key_by in pending_rules:
+                depending_object_key, depending_object = pending_rules.pop(key_by)
+                if event.type != 'DELETED':
+                    events_to_process.append(('MODIFIED', depending_object_key, depending_object))
+
+            for (event_type, rule_key, resource) in events_to_process:
+
+                # TODO: there is probably a bug here, where for rule deletion
+                # we should not have to first successfully build the rule; the key
+                # is enough to delete it. Same with a modification that causes
+                # the rule to break; we should remove it until fixed.
+                try:
+                    if isinstance(resource, SnapshotRule):
+                        rule = await rule_from_snapshotrule(ctx, resource)
+                    elif isinstance(resource, pykube.objects.PersistentVolumeClaim):
+                        rule = await rule_from_persistent_volume_claim(ctx, resource)
+                    elif isinstance(resource, pykube.objects.PersistentVolume):
+                        rule = await rule_from_persistent_volume(ctx, resource)
                     else:
-                        _log.info(
-                            events.Rule.UPDATED,
-                            key_hints=['rule.name']
-                        )
-                    rules[key_by] = rule
-                else:
-                    if key_by in rules:
+                        raise RuntimeError(f'{resource} is not supported.')
+
+                except RuleDependsOn as exc:
+                    # We have to remember this so that when we get an
+                    # update for the dependency that we lack here, we
+                    # can process this resource once more.
+                    pending_rules[(
+                        exc.data['kind'],
+                        exc.data['namespace'],
+                        exc.data['name'],
+                    )] = (rule_key, resource)
+                    continue
+
+                if not rule:
+                    continue
+
+                _log = _log.bind(
+                    rule=rule
+                )
+
+                if event_type == 'ADDED' or event_type == 'MODIFIED':
+                    if rule:
+                        if event_type == 'ADDED' or rule_key not in rules:
+                            _log.info(
+                                events.Rule.ADDED,
+                                key_hints=['rule.name']
+                            )
+                        else:
+                            _log.info(
+                                events.Rule.UPDATED,
+                                key_hints=['rule.name']
+                            )
+                        rules[rule_key] = rule
+                    else:
+                        if rule_key in rules:
+                            _log.info(
+                                events.Rule.REMOVED,
+                                key_hints=['volume_name']
+                            )
+                            rules.pop(rule_key)
+
+                elif event_type == 'DELETED':
+                    if rule_key in rules:
                         _log.info(
                             events.Rule.REMOVED,
                             key_hints=['volume_name']
                         )
-                        rules.pop(key_by)
-
-            elif event.type == 'DELETED':
-                if key_by in rules:
-                    _log.info(
-                        events.Rule.REMOVED,
-                        key_hints=['volume_name']
-                    )
-                    rules.pop(key_by)
-            else:
-                _log.warning('Unhandled event')
+                        rules.pop(rule_key)
+                else:
+                    _log.warning('Unhandled event')
 
             # We usually have duplicate disks within in `rules`,
             # which is indexed by resource kind. One reason is we
@@ -315,7 +452,7 @@ async def rules_from_volumes(ctx):
 async def get_rules(ctx):
     _log = _logger.new()
 
-    async for rules in rules_from_volumes(ctx):
+    async for rules in rules_from_kubernetes(ctx):
         _log.debug('get-rules.rules.updated', rules=rules)
         yield rules
 

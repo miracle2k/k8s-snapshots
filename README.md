@@ -308,6 +308,23 @@ This is an example for backing up an EBS disk on the Amazon cloud. The
 `disk` option requires different keys, depending on the backend. See
 the [examples folder](https://github.com/miracle2k/k8s-snapshots/tree/master/examples).
 
+You may also point `SnapshotRule` resources to PersistentVolumes (or
+PersistentVolumeClaims). This is intended as an alternative to adding
+an annotation; it may be desirable for some to separate the snapshot
+functionality from the resource.
+
+```
+cat <<EOF | kubectl apply -f -
+apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
+kind: SnapshotRule
+metadata:
+  name: mysql
+spec:
+  deltas: P1D P30D
+  persistentVolumeClaim: datadir-mysql
+EOF
+```
+
 
 ### Backing up the etcd volumes of a kops cluster
 

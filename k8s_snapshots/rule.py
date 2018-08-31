@@ -35,34 +35,6 @@ class Rule(Loggable):
     #: For Kubernetes resources: The selfLink of the source
     source = attr.ib(default=None)
 
-    @classmethod
-    def from_volume(
-            cls,
-            volume: pykube.objects.PersistentVolume,
-            backend: str,
-            disk: DiskIdentifier,
-            source: Union[
-                pykube.objects.PersistentVolumeClaim,
-                pykube.objects.PersistentVolume
-            ],
-            deltas: List[timedelta],
-            use_claim_name: bool=False
-    ) -> 'Rule':
-
-        claim_name = ""
-        if use_claim_name:
-            claim_ref = volume.obj['spec'].get('claimRef')
-            if claim_ref:
-                claim_name = claim_ref.get('name')
-
-        return cls(
-            name=rule_name_from_k8s_source(source, claim_name),
-            backend=backend,
-            source=source.obj['metadata']['selfLink'],
-            deltas=deltas,
-            disk=disk
-        )
-
     def to_dict(self) -> Dict[str, Any]:
         return attr.asdict(self)
 
@@ -164,8 +136,13 @@ def serialize_deltas(deltas: Iterable[timedelta]) -> str:
 async def rule_from_pv(
     ctx: Context,
     volume: pykube.objects.PersistentVolume,
-    deltas_annotation_key: str,
-    use_claim_name: bool=False,
+    deltas: List[timedelta],
+    *,
+    source: Union[
+        pykube.objects.PersistentVolumeClaim,
+        pykube.objects.PersistentVolume,
+        SnapshotRule
+    ]
 ) -> Rule:
     """Given a persistent volume object, create a backup rule
     object. Can return None if this volume is not configured for
@@ -173,15 +150,8 @@ async def rule_from_pv(
 
     The configuration for the rule will either come from the volume,
     or it's claim, if one is associated.
-
-    `use_claim_name` - if the persistent volume is bound, and it's
-    name is auto-generated, then prefer to use the name of the claim
-    for the snapshot.
     """
-    _log = _logger.new(
-        volume=volume.obj,
-        annotation_key=deltas_annotation_key,
-    )
+    _log = _logger.new(volume=volume.obj)
 
     # Do we have a backend that supports this disk?
     backend_name, backend_module = find_backend_for_volume(volume)
@@ -190,44 +160,26 @@ async def rule_from_pv(
             'Unsupported volume',
             volume=volume
         )
-    else:
-        disk = backend_module.get_disk_identifier(volume)
-        _log.debug('Volume supported by backend',
-                   volume=volume, backend=backend_module, disk=disk)
 
-    claim_ref = volume.obj['spec'].get('claimRef')
+    # Let the backend parse and validate this volume.
+    disk = backend_module.get_disk_identifier(volume)
+    _log.debug('Volume supported by backend',
+               volume=volume, backend=backend_module, disk=disk)
 
-    try:
-        _log.debug('Checking volume for deltas')
-        deltas = get_deltas(volume.annotations, deltas_annotation_key)
-        return Rule.from_volume(volume, backend_name, disk=disk,
-            source=volume, deltas=deltas, use_claim_name=use_claim_name)
-    except AnnotationNotFound:
-        if claim_ref is None:
-            raise
+    # If configured, use the name from the claim
+    claim_name = ""
+    if ctx.config.get('use_claim_name'):
+        claim_ref = volume.obj['spec'].get('claimRef')
+        if claim_ref:
+            claim_name = claim_ref.get('name')
 
-    volume_claim = await kube.get_resource_or_none(
-        ctx.kube_client,
-        pykube.objects.PersistentVolumeClaim,
-        claim_ref['name'],
-        namespace=claim_ref['namespace'],
+    return Rule(
+        name=rule_name_from_k8s_source(source, claim_name),
+        backend=backend_name,
+        source=volume.obj['metadata']['selfLink'],
+        deltas=deltas,
+        disk=disk
     )
-
-    if volume_claim is None:
-        raise AnnotationError(
-            'Could not find the PersistentVolumeClaim from claim_ref',
-            claim_ref=claim_ref,
-        )
-
-    try:
-        _log.debug('Checking volume claim for deltas')
-        deltas = get_deltas(volume_claim.annotations, deltas_annotation_key)
-        return Rule.from_volume(volume, backend_name, disk=disk,
-            source=volume_claim, deltas=deltas, use_claim_name=use_claim_name)
-    except AnnotationNotFound as exc:
-        raise AnnotationNotFound(
-            'No deltas found via volume claim'
-        ) from exc
 
 
 def get_deltas(annotations: Dict, deltas_annotation_key: str) -> List[timedelta]:
