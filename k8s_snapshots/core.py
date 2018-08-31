@@ -288,7 +288,7 @@ async def rules_from_volumes(ctx):
                         events.Rule.REMOVED,
                         key_hints=['volume_name']
                     )
-                    rules.pop(volume_name)
+                    rules.pop(key_by)
             else:
                 _log.warning('Unhandled event')
 
