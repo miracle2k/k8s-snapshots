@@ -146,7 +146,7 @@ async def make_backup(ctx, rule):
 
     ping_url = ctx.config.get('ping_url')
     if ping_url:
-        with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session:
             response = await session.request('GET', ping_url)
             _log.info(
                 events.Ping.SENT,
