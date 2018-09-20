@@ -35,7 +35,8 @@ from k8s_snapshots.rule import (
 from k8s_snapshots.snapshot import (
     make_backup,
     get_snapshots,
-    determine_next_snapshot
+    determine_next_snapshot,
+    is_snapshot_required
 )
 
 _logger = structlog.get_logger()
@@ -302,12 +303,12 @@ async def rules_from_kubernetes(ctx) -> AsyncIterable[List[Rule]]:
     certain resources, consuming changes, and determining which
     snapshot rules have been defined.
 
-    Every value is returns is a list of `Rule` objects, a complete
+    Every value it returns is a list of `Rule` objects, a complete
     set of snapshot rules defined at this point in time. Every set
     of rule objects replaces the previous one.
     """
 
-    # These are rules that we ready to "run".
+    # These are rules that we are ready to "run".
     rules = {}
 
     # These are resources that we know we have to recheck, because
@@ -522,7 +523,7 @@ async def scheduler(ctx, scheduling_chan, snapshot_reload_trigger):
     rules as defined in Kubernetes volume resources, and the existing
     snapshots.
 
-    This simpy observes a stream of 'next planned backup' events and
+    This simply observes a stream of 'next planned backup' events and
     sends then to the channel given. Note that this scheduler
     doesn't plan multiple backups in advance. Only ever a single
     next backup is scheduled.
@@ -570,9 +571,14 @@ async def backuper(ctx, scheduling_chan, snapshot_reload_trigger):
 
         if pendulum.now('utc') > current_target_time:
             try:
-                await make_backup(ctx, current_target_rule)
+                if await is_snapshot_required(ctx, current_target_rule):
+                    await make_backup(ctx, current_target_rule)
+                    await snapshot_reload_trigger.put(True)
+                else:
+                    _log.info('backuper.scheduled_backup_no_longer_required',
+                              rule=current_target_rule,
+                              target_time=current_target_time)
             finally:
-                await snapshot_reload_trigger.put(True)
                 current_target_time = current_target_rule = None
 
 
