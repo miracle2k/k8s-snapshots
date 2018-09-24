@@ -406,10 +406,14 @@ def filter_snapshots_by_rule(snapshots: List[Snapshot], rule: Rule) -> Iterable[
     return filter(match_disk, snapshots)
 
 
-async def is_snapshot_required(ctx: Context, rule: Rule):
+def is_snapshot_required(ctx: Context, rule: Rule):
     backend = get_backend_for_rule(ctx, rule)
-    all_snapshots = await load_snapshots(ctx, {backend})
-    snapshot_times = get_snapshot_times_for_rule(all_snapshots, rule)
+    all_snapshots = load_snapshots(ctx, {backend})
+    return snapshots_for_rule_are_outdated(rule, all_snapshots)
+
+
+def snapshots_for_rule_are_outdated(rule: Rule, existing_snapshots):
+    snapshot_times = get_snapshot_times_for_rule(existing_snapshots, rule)
 
     if not snapshot_times:
         return True
