@@ -153,7 +153,7 @@ for more information.
 Configuration
 -------------
 
-### Configure access permissions to Google Cloud.
+### Configure access permissions to Google Cloud
 
 If there are no default credentials to Kubernetes and the Cloud
 snapshot API, or the default credentials do not have the required
@@ -202,12 +202,33 @@ compute.snapshots.setLabels
 compute.zoneOperations.get
 ```
 
-### Configure access permissions on AWS.
+### Configure access permissions on AWS
 
-Currently, we will try to connect with the default credentials.
+If there are no default credentials to the Cloud API, or the default
+credentials do not have the required access scope, you may need to
+configure these environment variables.
 
-The region is usually detected via the meta data service. If that is not
-the case, you can set `AWS_REGION`.
+<table>
+  <tr>
+    <td>AWS_ACCESS_KEY_ID</td>
+    <td>
+      AWS IAM Access Key ID that is used to authenticate.
+     </td>
+  </tr>
+  <tr>
+    <td>AWS_SECRET_ACCESS_KEY</td>
+    <td>
+      AWS IAM Secret Access Key that is used to authenticate.
+    </td>
+  </tr>
+  <tr>
+    <td>AWS_REGION</td>
+    <td>
+      The region is usually detected via the meta data service. You can override the value.
+    </td>
+  </tr>
+</table>
+
 
 ### For Role-based Access Control (RBAC) enabled clusters
 
