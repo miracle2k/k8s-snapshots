@@ -246,6 +246,18 @@ If the above kubectl apply command produces an error about "attempt to grant ext
   kubectl create clusterrolebinding your-user-cluster-admin-binding --clusterrole=cluster-admin --user=your.google.cloud.email@example.org
 ```
 
+Finally, adjust the deployment by adding ```     serviceAccountName: k8s-snapshots``` to the spec (else you'll end up using the "default" service account), as follows:
+
+```
+<snip>
+    spec:
+     serviceAccountName: k8s-snapshots
+     containers:
+      - name: k8s-snapshots
+        image: elsdoerfer/k8s-snapshots:v2.0
+</snip>
+```
+
 ### Pinging a third party service
 
 <table>
