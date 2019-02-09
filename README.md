@@ -292,6 +292,7 @@ spec:
     kind: SnapshotRule
     shortNames:
     - sr
+EOF
 ```
 
 Or on Kubernetes 1.6 and lower:
