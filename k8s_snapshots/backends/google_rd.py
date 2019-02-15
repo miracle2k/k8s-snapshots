@@ -48,6 +48,7 @@ def get_project_id(ctx: Context):
 
 
 # TODO: This is currently not called. When should we do so? Once the Google
+# TODO: This is copied from the google.py backend!
 # Cloud backend is loaded for the first time?
 def validate_config(config):
     """Ensure the config of this backend is correct.
@@ -102,35 +103,25 @@ def validate_config(config):
     return is_valid
 
 
-class GoogleDiskIdentifier(NamedTuple):
+class GoogleRegionalDiskIdentifier(NamedTuple):
     name: str
-    zone: str
+    region: str
 
 
-def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskIdentifier:
+def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleRegionalDiskIdentifier:
     gce_disk = volume.obj['spec']['gcePersistentDisk']['pdName']
 
-    # How can we know the zone? In theory, the storage class can
-    # specify a zone; but if not specified there, K8s can choose a
-    # random zone within the master region. So we really can't trust
-    # that value anyway.
-    # There is a label that gives a failure region, but labels aren't
-    # really a trustworthy source for this.
-    # Apparently, this is a thing in the Kubernetes source too, see:
-    # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
-    # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
-    gce_disk_zone = volume.labels.get(
-        'failure-domain.beta.kubernetes.io/zone'
-    )
-    if not gce_disk_zone:
+    gce_disk_region = volume.labels.get('failure-domain.beta.kubernetes.io/region')
+
+    if not gce_disk_region:
         raise UnsupportedVolume('cannot find the zone of the disk')
 
-    return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_zone)
+    return GoogleRegionalDiskIdentifier(name=gce_disk, region=gce_disk_region)
 
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
     return bool(volume.obj['spec'].get('gcePersistentDisk')) and \
-           len(volume.obj['metadata']['labels'].get('failure-domain.beta.kubernetes.io/zone').split('__')) == 1
+           len(volume.obj['metadata']['labels'].get('failure-domain.beta.kubernetes.io/zone').split('__')) == 2
 
 
 def parse_timestamp(date_str: str) -> pendulum.Pendulum:
@@ -143,8 +134,8 @@ def validate_disk_identifier(disk_id: Dict) -> DiskIdentifier:
     it should raise a `ValueError` with a suitable error message.
     """
     try:
-        return GoogleDiskIdentifier(
-            zone=disk_id['zone'],
+        return GoogleRegionalDiskIdentifier(
+            region=disk_id['region'],
             name=disk_id['name']
         )
     except:
@@ -161,6 +152,7 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
     """
     Return the existing snapshots.
     """
+    get_gcloud(ctx=ctx)
     snapshots = get_gcloud(ctx).snapshots()
     request = snapshots.list(
         project=get_project_id(ctx),
@@ -174,13 +166,13 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
         resp = request.execute()
         for item in resp.get('items', []):
             # We got to parse out the disk zone and name from the source disk.
-            # It's an url that ends with '/zones/{zone}/disks/{name}'/
-            _, zone, _, disk = item['sourceDisk'].split('/')[-4:]
+            # It's an url that ends with '/regions/{region}/disks/{name}'/
+            _, region, _, disk = item['sourceDisk'].split('/')[-4:]
 
             loaded_snapshots.append(Snapshot(
                 name=item['name'],
                 created_at=parse_timestamp(item['creationTimestamp']),
-                disk=GoogleDiskIdentifier(zone=zone, name=disk)
+                disk=GoogleRegionalDiskIdentifier(name=disk, region=region)
             ))
         request = snapshots.list_next(request, resp)
 
@@ -189,7 +181,7 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
 
 def create_snapshot(
     ctx: Context,
-    disk: GoogleDiskIdentifier,
+    disk: GoogleRegionalDiskIdentifier,
     snapshot_name: str,
     snapshot_description: str
 ) -> NewSnapshotIdentifier:
@@ -200,23 +192,16 @@ def create_snapshot(
     
     gcloud = get_gcloud(ctx)
 
-    # Returns a ZoneOperation: {kind: 'compute#operation',
-    # operationType: 'createSnapshot', ...}.
-    # Google's documentation is confusing regarding this, since there's two
-    # tables of payload parameter descriptions on the page, one of them
-    # describes the input parameters, but contains output-only parameters,
-    # the correct table can be found at
-    # https://cloud.google.com/compute/docs/reference/latest/disks/createSnapshot#response
-    operation = gcloud.disks().createSnapshot(
+    # https://cloud.google.com/compute/docs/reference/rest/beta/regionDisks/createSnapshot
+    operation = gcloud.regionDisks().createSnapshot(
         disk=disk.name,
         project=get_project_id(ctx),
-        zone=disk.zone,
-        body=request_body
-    ).execute()
+        region=disk.region,
+        body=request_body).execute()
 
     return {
         'snapshot_name': snapshot_name,
-        'zone': disk.zone,
+        'region': disk.region,
         'operation_name': operation['name']
     }
 
@@ -225,7 +210,7 @@ def get_snapshot_status(
     ctx: Context,
     snapshot_identifier: NewSnapshotIdentifier
 ) -> SnapshotStatus:
-    """In Google Cloud, the createSnapshot operation returns a ZoneOperation
+    """In Google Cloud, the createSnapshot operation returns a RegionOperation
     object which goes from PENDING, to RUNNING, to DONE.
     The snapshot object itself can be CREATING, DELETING, FAILED, READY,
     or UPLOADING.
@@ -240,9 +225,9 @@ def get_snapshot_status(
     gcloud = get_gcloud(ctx)
     
     # First, check the operation state
-    operation = gcloud.zoneOperations().get(
+    operation = gcloud.regionOperations().get(
         project=get_project_id(ctx),
-        zone=snapshot_identifier['zone'],
+        region=snapshot_identifier['region'],
         operation=snapshot_identifier['operation_name']
     ).execute()
 
@@ -304,9 +289,9 @@ def delete_snapshot(
     ).execute()
 
 
-def get_gcloud(ctx, version: str= 'v1'):
+def get_gcloud(ctx, version: str='beta'):
     """
-    Get a configured Google Compute API Client instance.
+    Get a configured Google Compute API Client instance version Beta.
 
     Note that the Google API Client is not threadsafe. Cache the instance locally
     if you want to avoid OAuth overhead between calls.
@@ -314,7 +299,7 @@ def get_gcloud(ctx, version: str= 'v1'):
     Parameters
     ----------
     version
-        Compute API version
+        Compute API version Beta
     """
     SCOPES = 'https://www.googleapis.com/auth/compute'
     credentials = None
