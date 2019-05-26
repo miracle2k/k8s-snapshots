@@ -2,6 +2,7 @@ import enum
 import pendulum
 from typing import Dict, List, NamedTuple, Any
 from ..context import Context
+import pykube.objects
 
 
 @enum.unique
@@ -31,6 +32,17 @@ class Snapshot(NamedTuple):
 # cloud as it's being created. This is distinct from :class:`Snapshot`, which
 # represents a completed snapshot.
 NewSnapshotIdentifier = Any
+
+
+def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> DiskIdentifier:
+    """Return a DiskIdentifier from a PersistentVolume."""
+    raise NotImplementedError()
+
+
+def supports_volume(volume: pykube.objects.PersistentVolume):
+    """Return either the given persistent volume is supported by
+    the backend."""
+    raise NotImplementedError()
 
 
 def validate_disk_identifier(disk_id: Dict) -> DiskIdentifier:
