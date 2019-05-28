@@ -1,5 +1,5 @@
 google-api-python-client==1.6.2
-requests==2.18.3
+requests==2.20.0
 pykube==0.14.0
 tarsnapper==0.4.0
 aiochannel==0.2.2
