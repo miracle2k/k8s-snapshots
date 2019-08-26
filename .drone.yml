@@ -21,5 +21,4 @@ steps:
     when:
       ref:
         - refs/heads/master
-        - refs/heads/drone
         - refs/tags/*
