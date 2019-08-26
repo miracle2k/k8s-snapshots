@@ -239,6 +239,26 @@ In kubernetes clusters with RBAC, the required permissions need to be provided t
   ```
     kubectl apply -f rbac.yaml
   ```
+  
+Furthermore, under GKE, "Because of the way Container Engine checks permissions when you create a Role or ClusterRole, you must first create a RoleBinding that grants you all of the permissions included in the role you want to create." 
+
+If the above kubectl apply command produces an error about "attempt to grant extra privileges", the following will grant _your_ user the necessary privileges *first*, so that you can then bind them to the service account:
+
+```
+  kubectl create clusterrolebinding your-user-cluster-admin-binding --clusterrole=cluster-admin --user=your.google.cloud.email@example.org
+```
+
+Finally, adjust the deployment by adding ```     serviceAccountName: k8s-snapshots``` to the spec (else you'll end up using the "default" service account), as follows:
+
+```
+<snip>
+    spec:
+     serviceAccountName: k8s-snapshots
+     containers:
+      - name: k8s-snapshots
+        image: elsdoerfer/k8s-snapshots:v2.0
+</snip>
+```
 
 ### Pinging a third party service
 
