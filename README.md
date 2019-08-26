@@ -57,6 +57,7 @@ given, it will create a daily snapshot of the volume. It will keep
 snapshot. If the daemon is not running for a while, it will still
 try to approximate your desired snapshot scheme as closely as possible.
 
+
 ### A tip for kops users
 
 *k8s-snapshots* need EBS and S3 permissions to take and save snapshots. Under
@@ -234,11 +235,11 @@ configure these environment variables.
 
 ### For Role-based Access Control (RBAC) enabled clusters
 
-In kubernetes clusters with RBAC, the required permissions need to be provided to the `k8s-snapshots` pods to watch and list `persistentvolume` or `persistentvolumeclaims`.
+In Kubernetes clusters with RBAC, the required permissions need to be provided to the `k8s-snapshots` pods to watch and list `persistentvolume` or `persistentvolumeclaims`. We provide a manifest to setup a `ServiceAccount` with a minimal set of permissions in [rbac.yaml](manifests/rbac.yaml).
 
-  ```
-    kubectl apply -f rbac.yaml
-  ```
+```
+kubectl apply -f manifests/rbac.yaml
+```
   
 Furthermore, under GKE, "Because of the way Container Engine checks permissions when you create a Role or ClusterRole, you must first create a RoleBinding that grants you all of the permissions included in the role you want to create." 
 
@@ -248,7 +249,7 @@ If the above kubectl apply command produces an error about "attempt to grant ext
   kubectl create clusterrolebinding your-user-cluster-admin-binding --clusterrole=cluster-admin --user=your.google.cloud.email@example.org
 ```
 
-Finally, adjust the deployment by adding ```     serviceAccountName: k8s-snapshots``` to the spec (else you'll end up using the "default" service account), as follows:
+Finally, adjust the deployment by adding ```serviceAccountName: k8s-snapshots``` to the spec (else you'll end up using the "default" service account), as follows:
 
 ```
 <snip>
