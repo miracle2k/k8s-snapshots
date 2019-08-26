@@ -367,6 +367,10 @@ the volume ids of your etcd volumes.
     <td>**Default: False**. Output the log messages as JSON objects for
         easier processing.</td>
   </tr>
+  <tr>
+    <td>TZ</td>
+    <td>**Default: UTC**. Used to change the timezone. ie. TZ=America/Montreal</td>
+  </tr>
 </table>
 
 
