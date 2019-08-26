@@ -204,6 +204,8 @@ compute.zoneOperations.get
 
 ### Configure access permissions on AWS
 
+AWS will need the following [role](ROLE.md)
+
 If there are no default credentials to the Cloud API, or the default
 credentials do not have the required access scope, you may need to
 configure these environment variables.
