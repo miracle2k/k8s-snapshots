@@ -55,7 +55,17 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume):
     else:
         # Older versions of kube just put the volume id in the volume id field.
         volume_id = volume_url
-        region = volume.obj['metadata']['labels']['failure-domain.beta.kubernetes.io/region']
+        region = volume.obj.get('metadata').get('labels', {}).get('failure-domain.beta.kubernetes.io/region')
+        if region:
+            return AWSDiskIdentifier(region=region, volume_id=volume_id)
+        else:
+            nodeSelectorTerms = volume.obj['spec']['nodeAffinity']['required']['nodeSelectorTerms']
+            for term in nodeSelectorTerms:
+                matchExpressions = term.get('matchExpressions')
+                if matchExpressions:
+                    for expression in matchExpressions:
+                        if expression.get('key') == "failure-domain.beta.kubernetes.io/region":
+                            region = expression.get('values')[0]
         return AWSDiskIdentifier(region=region, volume_id=volume_id)
 
 def parse_timestamp(date) -> pendulum.Pendulum:
