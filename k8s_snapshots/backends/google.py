@@ -196,7 +196,7 @@ def create_snapshot(
         'name': snapshot_name,
         'description': snapshot_description
     }
-    
+
     gcloud = get_gcloud(ctx)
 
     # Returns a ZoneOperation: {kind: 'compute#operation',
@@ -235,9 +235,9 @@ def get_snapshot_status(
     _log = _logger.new(
         snapshot_identifier=snapshot_identifier,
     )
-    
+
     gcloud = get_gcloud(ctx)
-    
+
     # First, check the operation state
     operation = gcloud.zoneOperations().get(
         project=get_project_id(ctx),
@@ -280,7 +280,7 @@ def set_snapshot_labels(
         snapshot=snapshot_identifier['snapshot_name'],
         project=get_project_id(ctx)
     ).execute()
-    
+
     body = {
         'labels': labels,
         'labelFingerprint': snapshot['labelFingerprint'],
@@ -318,13 +318,13 @@ def get_gcloud(ctx, version: str= 'v1'):
     SCOPES = 'https://www.googleapis.com/auth/compute'
     credentials = None
 
-    if ctx.config.get('gcloud_json_keyfile_name'):
+    if ctx.config.get('gcloud_credentials_file'):
         credentials = ServiceAccountCredentials.from_json_keyfile_name(
-            ctx.config.get('gcloud_json_keyfile_name'),
+            ctx.config.get('gcloud_credentials_file'),
             scopes=SCOPES)
 
-    if ctx.config.get('gcloud_json_keyfile_string'):
-        keyfile = json.loads(ctx.config.get('gcloud_json_keyfile_string'))
+    if ctx.config.get('google_application_credentials'):
+        keyfile = json.loads(ctx.config.get('google_application_credentials'))
         credentials = ServiceAccountCredentials.from_json_keyfile_dict(
             keyfile, scopes=SCOPES)
 

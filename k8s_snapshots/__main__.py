@@ -17,7 +17,7 @@ def main():
 
     # Now with logging setup, read and validate the config.
     config = k8s_snapshots.config.from_environ()
-
+    
     if config['debug']:
         sys.excepthook = debug_excepthook
 
@@ -25,7 +25,7 @@ def main():
     _logger = structlog.get_logger(__name__)
 
     _logger.bind(
-        gcloud_projec=config['gcloud_project'],
+        gcloud_project=config['gcloud_project'],
         deltas_annotation_key=config['deltas_annotation_key'],
     )
 

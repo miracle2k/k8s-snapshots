@@ -162,6 +162,13 @@ access scope, you may need to configure these.
 
 <table>
   <tr>
+    <td>CLOUD_PROVIDER</td>
+    <td>
+      Set to 'google' to use gcloud exclusively.
+      Can be detected based on volume spec gcePersistentDisk.
+     </td>
+  </tr>
+  <tr>
     <td>GCLOUD_PROJECT</td>
     <td>
       Name of the Google Cloud project. This is required to use the Google
@@ -171,14 +178,18 @@ access scope, you may need to configure these.
      </td>
   </tr>
   <tr>
-    <td>GCLOUD_JSON_KEYFILE_NAME</td>
+    <td>GCLOUD_CREDENTIALS_FILE</td>
     <td>
-      Filename to the JSON keyfile that is used to authenticate.
+      Filename to the JSON gcloud credentials file used to authenticate.
       You'll want to mount it into the container.
+      By default set to here for for PyKube:
+      ~/.config/gcloud/application_default_credentials.json
+      PyKube doesn't use env to locate the config but
+      GOOGLE_APPLICATION_CREDENTIALS takes precedence.
     </td>
   </tr>
   <tr>
-    <td>GCLOUD_JSON_KEYFILE_STRING</td>
+    <td>GOOGLE_APPLICATION_CREDENTIALS</td>
     <td>
       The contents of the JSON keyfile that is used to authenticate.
     </td>
@@ -240,8 +251,8 @@ In Kubernetes clusters with RBAC, the required permissions need to be provided t
 ```
 kubectl apply -f manifests/rbac.yaml
 ```
-  
-Furthermore, under GKE, "Because of the way Container Engine checks permissions when you create a Role or ClusterRole, you must first create a RoleBinding that grants you all of the permissions included in the role you want to create." 
+
+Furthermore, under GKE, "Because of the way Container Engine checks permissions when you create a Role or ClusterRole, you must first create a RoleBinding that grants you all of the permissions included in the role you want to create."
 
 If the above kubectl apply command produces an error about "attempt to grant extra privileges", the following will grant _your_ user the necessary privileges *first*, so that you can then bind them to the service account:
 
