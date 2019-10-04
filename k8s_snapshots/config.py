@@ -1,3 +1,4 @@
+import os
 from typing import Dict
 import confcollect
 import structlog
@@ -31,8 +32,11 @@ DEFAULT_CONFIG = {
     'debug': False,
 
     'gcloud_project': '',
-    'gcloud_json_keyfile_name': '',
-    'gcloud_json_keyfile_string': '',
+    'gcloud_credentials_file': os.path.join(
+        os.path.expanduser('~'),
+        ".config/gcloud/application_default_credentials.json"
+    ),
+    'google_application_credentials': '',
 
     'aws_region': ''
 }
@@ -45,6 +49,12 @@ def validate_config(config: Dict) -> bool:
 def from_environ_basic() -> Dict:
     config = DEFAULT_CONFIG.copy()
     config.update(confcollect.from_environ(by_defaults=DEFAULT_CONFIG))
+    # Backwards compatability
+    if config.get('gcloud_json_keyfile_name') and not config.get('gcloud_credentials_file'):
+        config['gcloud_credentials_file'] = config.get('gcloud_json_keyfile_name')
+    if config.get('gcloud_json_keyfile_string') and not config.get('google_application_credentials'):
+        config['google_application_credentials'] = config.get('gcloud_json_keyfile_string')
+
     return config
 
 
