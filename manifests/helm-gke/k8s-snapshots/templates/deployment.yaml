@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "k8s-snapshots.fullname" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+  labels:
+{{ include "k8s-snapshots.release_labels" . | indent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 1 }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit | default 2 }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name | quote }}
+  template:
+    metadata:
+      labels:
+{{ include "k8s-snapshots.release_labels" . | indent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- if .Values.global }}
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml .Values.global.imagePullSecrets | indent 8 }}
+      {{- end }}
+      {{- else if .Values.imagePullSecrets }}
+{{ toYaml .Values.imagePullSecrets | indent 8 }}
+      {{- else  }}
+      imagePullSecrets:
+        - name: {{ template "k8s-snapshots.fullname" . }}-pagerinc-docker-registry
+      {{- end }}
+      {{- if .Values.global }}
+      {{- if .Values.global.affinity }}
+      affinity:
+{{ toYaml .Values.global.affinity | indent 8 }}
+      {{- end }}
+      {{- else if .Values.affinity }}
+      affinity:
+{{ toYaml .Values.affinity | indent 8 }}
+      {{- end }}
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.nodeSelector | indent 8 }}
+      {{- end }}
+      {{- if .Values.global }}
+      {{- if .Values.global.tolerations }}
+      tolerations:
+{{ toYaml .Values.global.tolerations | indent 8 }}
+      {{- end }}
+      {{- else if .Values.tolerations }}
+      tolerations:
+{{ toYaml .Values.tolerations | indent 8 }}
+      {{- end }}
+      volumes:
+        - name: kube-entry
+          configMap:
+            name: {{ template "k8s-snapshots.fullname" . }}
+            items:
+              - key: kube_entry
+                path: kube_entry
+                mode: 0770
+      containers:
+        - name: app
+          image: {{ template "k8s-snapshots.image_name" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "" | quote }}
+          command: ['/usr/sbin/kube_entry', '--write-gcloud-credentials-file', '--auth-gcloud', '--auth-kube', '--run']
+          volumeMounts:
+            - name: kube-entry
+              mountPath: '/usr/sbin/kube_entry'
+              subPath: kube_entry
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ template "k8s-snapshots.fullname" . }}
+                optional: false
+          env:
+{{- range $name, $value := .Values.env }}
+{{- if not (empty $value) }}
+            - name: {{ $name | quote }}
+              value: {{ $value | quote }}
+{{- end }}
+{{- end }}

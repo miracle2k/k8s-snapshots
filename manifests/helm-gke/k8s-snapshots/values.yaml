@@ -1,0 +1,39 @@
+replicaCount: 1
+
+labels:
+  role: extensions
+  tier: snapshots
+  component: k8s-snapshots
+
+image:
+  registry: your_repo
+  tag: your_tag
+  pullPolicy: Always
+
+custom-resource-definition:
+  enabled: true
+
+rbac:
+  enabled: true
+
+third-party-resource:
+  enabled: false
+
+env:
+  CLOUD_PROVIDER: "google"
+  USE_CLAIM_NAME: true
+  JSON_LOG: true
+  # Possible values:  DEBUG, INFO, WARNING, ERROR
+  LOG_LEVEL: "INFO"
+  GCLOUD_CREDENTIALS_FILE: "/root/.config/gcloud/application_default_credentials.json"
+  KUBE_CONFIG_FILE: "/root/.kube/config"
+  GCLOUD_PROJECT: "CHNAGEME"
+  GCLOUD_REGION: 'CHNAGEME'
+  GCLOUD_CLUSTER: 'CHNAGEME'
+  # Uncomment these and modify the entry if we need to ssh
+  # BASTION_NAME: 'shared-vpc-bastion'
+  # BASTION_ZONE: 'us-east1-c'
+  # HTTPS_PROXY=127.0.0.1:8888
+  # Uncomment and modify to enable url pinging
+  #   when a snapshot is taken
+  # PING_URL: "DEBUG"

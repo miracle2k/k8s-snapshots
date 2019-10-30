@@ -1,0 +1,74 @@
+#!/bin/sh
+usage()
+{
+cat <<- _EOF_
+usage: entry [-v || --env]
+                    [-k  || --write-kube-config-file]
+                    [-g  || --write-gcloud-credentials-file]
+                    [-ag || --auth-gcloud]
+                    [-ak || --auth-kube]
+                    [-s  || --gcloud-ssh ]
+                    [-r  || --run]
+                    [-sh || --shell] [-h || --help]
+_EOF_
+
+}
+
+while [ "$1" != "" ]; do
+    case $1 in
+        -v | --env )                           env=1
+                                               ;;
+        -k | --write-kube-config-file )        write_kube_config_file=1
+                                               ;;
+        -g | --write-gcloud-credentials-file ) write_gcloud_credentials_file=1
+                                               ;;
+        -ag | --auth-gcloud )                  auth_gcloud=1
+                                               ;;
+        -ak | --auth-kube )                    auth_kube=1
+                                               ;;
+        -s  | --gcloud-ssh )                    gcloud_ssh=1
+                                               ;;
+        -r | --run )                           run=1
+                                               ;;
+        -sh | --shell )                        shell=1
+                                               ;;
+        -h | --help )                          usage
+                                                exit
+                                               ;;
+        * )                                    usage
+                                               exit 1
+    esac
+    shift
+done
+# source ~/.bash_profile
+if [ "$env" = "1" ]; then
+  env
+fi
+if [ "$write_gcloud_credentials_file" = "1" ]; then
+  mkdir -p $(dirname "${GCLOUD_CREDENTIALS_FILE}")
+  echo "${GCLOUD_CREDENTIALS_TEMP}" >> "${GCLOUD_CREDENTIALS_FILE}"
+fi
+if [ "$auth_gcloud" = "1" ]; then
+  gcloud auth activate-service-account \
+      --key-file "$GCLOUD_CREDENTIALS_FILE"
+fi
+if [ "$auth_kube" = "1" ]; then
+  gcloud container clusters get-credentials \
+      --project $GCLOUD_PROJECT \
+      --region $GCLOUD_REGION \
+      $GCLOUD_CLUSTER
+fi
+if [ "$gcloud_ssh" = "1" ]; then
+  gcloud compute ssh \
+      --project "$GCLOUD_PROJECT" \
+      --zone "$BASTION_ZONE" \
+      --ssh-key-expire-after 2m \
+      --quiet \
+      "$BASTION_NAME" -- -f -N -4 -L 8888:"$HTTPS_PROXY"
+fi
+if [ "$run" = "1" ]; then
+  k8s-snapshots
+fi
+if [ "$shell" = "1" ]; then
+  /bin/sh
+fi

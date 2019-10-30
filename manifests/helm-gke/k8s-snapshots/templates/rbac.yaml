@@ -1,0 +1,53 @@
+{{- if .Values.rbac.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app: {{ template "k8s-snapshots.fullname" . }}
+  name: {{ template "k8s-snapshots.fullname" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app: {{ template "k8s-snapshots.fullname" . }}
+  name: {{ template "k8s-snapshots.fullname" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+rules:
+  - apiGroups:
+      - "{{ template "k8s-snapshots.fullname" . }}.elsdoerfer.com"
+    resources:
+      - snapshotrules
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+      - pods
+      - persistentvolumeclaims
+      - persistentvolumes
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app: {{ template "k8s-snapshots.fullname" . }}
+  name: {{ template "k8s-snapshots.fullname" . }}
+  namespace: {{ .Release.Namespace | default "kube-system" }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ template "k8s-snapshots.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ template "k8s-snapshots.fullname" . }}
+    namespace: {{ .Release.Namespace | default "kube-system" }}
+{{- end }}
