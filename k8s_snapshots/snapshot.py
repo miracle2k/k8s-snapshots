@@ -365,9 +365,13 @@ def determine_next_snapshot(snapshots, rules):
     for rule in rules:
         _log = _logger.new(rule=rule)
         # Find all the snapshots that match this rule
+        # This returns a <filter> object
         snapshots_for_rule = filter_snapshots_by_rule(snapshots, rule)
-        # Rewrite the list to snapshot
-        snapshot_times = map(lambda s: s.created_at, snapshots_for_rule)
+
+        snapshot_times = list()
+        for item in snapshots_for_rule:
+            snapshot_times.append(item.created_at)
+
         # Sort by timestamp
         snapshot_times = sorted(snapshot_times, reverse=True)
         snapshot_times = list(snapshot_times)
