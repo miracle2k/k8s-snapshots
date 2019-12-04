@@ -104,8 +104,8 @@ def validate_config(config):
 
 class GoogleDiskIdentifier(NamedTuple):
     name: str
-    zone: str
-    region: str
+    zone: str = None
+    region: str = None
     regional: bool
 
 
@@ -138,9 +138,9 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskId
     if "__" in gce_disk_zone:
         # seems like Google likes to put __ in between zones in the label
         # failure-domain.beta.kubernetes.io/zone when the pv is regional
-        return GoogleDiskIdentifier(name=gce_disk, zone="N/A", region=gce_disk_region, regional=True)
+        return GoogleDiskIdentifier(name=gce_disk, region=gce_disk_region, regional=True)
     else:
-        return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_zone, region="N/A", regional=False)
+        return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_zone, regional=False)
 
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
@@ -199,14 +199,14 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
                 loaded_snapshots.append(Snapshot(
                     name=item['name'],
                     created_at=parse_timestamp(item['creationTimestamp']),
-                    disk=GoogleDiskIdentifier(name=disk, region=region, zone="N/A", regional=True)
+                    disk=GoogleDiskIdentifier(name=disk, region=region, regional=True)
                 ))
             else:
                 zone = sourceDiskList[8]
                 loaded_snapshots.append(Snapshot(
                     name=item['name'],
                     created_at=parse_timestamp(item['creationTimestamp']),
-                    disk=GoogleDiskIdentifier(name=disk, region="N/A", zone=zone, regional=False)
+                    disk=GoogleDiskIdentifier(name=disk, zone=zone, regional=False)
                 ))
 
         request = snapshots.list_next(request, resp)
