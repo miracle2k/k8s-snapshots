@@ -104,9 +104,9 @@ def validate_config(config):
 
 class GoogleDiskIdentifier(NamedTuple):
     name: str
+    regional: bool
     zone: str = None
     region: str = None
-    regional: bool
 
 
 def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskIdentifier:
