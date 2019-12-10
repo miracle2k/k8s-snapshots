@@ -104,7 +104,9 @@ def validate_config(config):
 
 class GoogleDiskIdentifier(NamedTuple):
     name: str
-    zone: str
+    regional: bool
+    zone: str = None
+    region: str = None
 
 
 def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskIdentifier:
@@ -122,10 +124,23 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskId
     gce_disk_zone = volume.labels.get(
         'failure-domain.beta.kubernetes.io/zone'
     )
+
     if not gce_disk_zone:
         raise UnsupportedVolume('cannot find the zone of the disk')
 
-    return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_zone)
+    gce_disk_region = volume.labels.get(
+        'failure-domain.beta.kubernetes.io/region'
+    )
+
+    if not gce_disk_region:
+        raise UnsupportedVolume('cannot find the region of the disk')
+
+    if "__" in gce_disk_zone:
+        # seems like Google likes to put __ in between zones in the label
+        # failure-domain.beta.kubernetes.io/zone when the pv is regional
+        return GoogleDiskIdentifier(name=gce_disk, region=gce_disk_region, regional=True)
+    else:
+        return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_zone, regional=False)
 
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
@@ -141,6 +156,7 @@ def validate_disk_identifier(disk_id: Dict) -> DiskIdentifier:
     it's own, local `DiskIdentifier`. If the disk_id is not valid,
     it should raise a `ValueError` with a suitable error message.
     """
+
     try:
         return GoogleDiskIdentifier(
             zone=disk_id['zone'],
@@ -174,13 +190,25 @@ def load_snapshots(ctx, label_filters: Dict[str, str]) -> List[Snapshot]:
         for item in resp.get('items', []):
             # We got to parse out the disk zone and name from the source disk.
             # It's an url that ends with '/zones/{zone}/disks/{name}'/
-            _, zone, _, disk = item['sourceDisk'].split('/')[-4:]
+            sourceDiskList = item['sourceDisk'].split('/')
 
-            loaded_snapshots.append(Snapshot(
-                name=item['name'],
-                created_at=parse_timestamp(item['creationTimestamp']),
-                disk=GoogleDiskIdentifier(zone=zone, name=disk)
-            ))
+            disk = sourceDiskList[-1]
+
+            if "regions" in sourceDiskList:
+                region = sourceDiskList[8]
+                loaded_snapshots.append(Snapshot(
+                    name=item['name'],
+                    created_at=parse_timestamp(item['creationTimestamp']),
+                    disk=GoogleDiskIdentifier(name=disk, region=region, regional=True)
+                ))
+            else:
+                zone = sourceDiskList[8]
+                loaded_snapshots.append(Snapshot(
+                    name=item['name'],
+                    created_at=parse_timestamp(item['creationTimestamp']),
+                    disk=GoogleDiskIdentifier(name=disk, zone=zone, regional=False)
+                ))
+
         request = snapshots.list_next(request, resp)
 
     return loaded_snapshots
@@ -206,19 +234,31 @@ def create_snapshot(
     # describes the input parameters, but contains output-only parameters,
     # the correct table can be found at
     # https://cloud.google.com/compute/docs/reference/latest/disks/createSnapshot#response
-    operation = gcloud.disks().createSnapshot(
-        disk=disk.name,
-        project=get_project_id(ctx),
-        zone=disk.zone,
-        body=request_body
-    ).execute()
+    if disk.regional:
+        operation = gcloud.regionDisks().createSnapshot(
+            disk=disk.name,
+            project=get_project_id(ctx),
+            region=disk.region,
+            body=request_body
+        ).execute()
+        return {
+            'snapshot_name': snapshot_name,
+            'region': disk.region,
+            'operation_name': operation['name']
+        }
 
-    return {
-        'snapshot_name': snapshot_name,
-        'zone': disk.zone,
-        'operation_name': operation['name']
-    }
-
+    else:
+        operation = gcloud.disks().createSnapshot(
+            disk=disk.name,
+            project=get_project_id(ctx),
+            zone=disk.zone,
+            body=request_body
+        ).execute()
+        return {
+            'snapshot_name': snapshot_name,
+            'zone': disk.zone,
+            'operation_name': operation['name']
+        }
 
 def get_snapshot_status(
     ctx: Context,
@@ -239,11 +279,19 @@ def get_snapshot_status(
     gcloud = get_gcloud(ctx)
 
     # First, check the operation state
-    operation = gcloud.zoneOperations().get(
-        project=get_project_id(ctx),
-        zone=snapshot_identifier['zone'],
-        operation=snapshot_identifier['operation_name']
-    ).execute()
+
+    if "region" in snapshot_identifier:
+        operation = gcloud.regionOperations().get(
+            project=get_project_id(ctx),
+            region=snapshot_identifier['region'],
+            operation=snapshot_identifier['operation_name']
+        ).execute()
+    else:
+        operation = gcloud.zoneOperations().get(
+            project=get_project_id(ctx),
+            zone=snapshot_identifier['zone'],
+            operation=snapshot_identifier['operation_name']
+        ).execute()
 
     if not operation['status'] == 'DONE':
         _log.debug('google.status.operation_not_complete',
