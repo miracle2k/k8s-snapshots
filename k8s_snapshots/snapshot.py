@@ -33,7 +33,7 @@ async def expire_snapshots(ctx, rule: Rule):
     backend = get_backend_for_rule(ctx, rule)
 
     snapshots_objects = filter_snapshots_by_rule(
-        await load_snapshots(ctx, [backend]), rule)
+        await load_snapshots(ctx, {backend}), rule)
     snapshots_with_date = {s: s.created_at for s in snapshots_objects}
 
     to_keep = expire(snapshots_with_date, rule.deltas)
@@ -204,7 +204,6 @@ async def poll_for_status(
         -   An awaitable for the new version of the resource.
     retry_for
         A list of statuses to retry for.
-    status_key
     sleep_time
         The time, in seconds, to sleep for between calls.
 
@@ -331,7 +330,7 @@ async def get_snapshots(ctx: Context, rulesgen, reload_trigger):
     )
 
     async for item in combined:
-        # Figure out a se of backends that are in use with the rules
+        # Figure out a set of backends that are in use with the rules
         backends = set()
         for rule in item['rules']:
             backends.add(get_backend_for_rule(ctx, rule))
@@ -364,13 +363,7 @@ def determine_next_snapshot(snapshots, rules):
 
     for rule in rules:
         _log = _logger.new(rule=rule)
-        # Find all the snapshots that match this rule
-        snapshots_for_rule = filter_snapshots_by_rule(snapshots, rule)
-        # Rewrite the list to snapshot
-        snapshot_times = map(lambda s: s.created_at, snapshots_for_rule)
-        # Sort by timestamp
-        snapshot_times = sorted(snapshot_times, reverse=True)
-        snapshot_times = list(snapshot_times)
+        snapshot_times = get_snapshot_times_for_rule(snapshots, rule)
 
         # There are no snapshots for this rule; create the first one.
         if not snapshot_times:
@@ -397,7 +390,33 @@ def determine_next_snapshot(snapshots, rules):
     return next_rule, next_timestamp
 
 
-def filter_snapshots_by_rule(snapshots: List[Snapshot], rule) -> Iterable[Snapshot]:
+def get_snapshot_times_for_rule(snapshots: List[Snapshot], rule: Rule):
+    # Find all the snapshots that match this rule
+    snapshots_for_rule = filter_snapshots_by_rule(snapshots, rule)
+    # Rewrite the list to snapshot
+    snapshot_times = map(lambda s: s.created_at, snapshots_for_rule)
+    # Sort by timestamp
+    snapshot_times = sorted(snapshot_times, reverse=True)
+    return list(snapshot_times)
+
+
+def filter_snapshots_by_rule(snapshots: List[Snapshot], rule: Rule) -> Iterable[Snapshot]:
     def match_disk(snapshot: Snapshot):
         return snapshot.disk == rule.disk
     return filter(match_disk, snapshots)
+
+
+async def is_snapshot_required(ctx: Context, rule: Rule):
+    backend = get_backend_for_rule(ctx, rule)
+    all_snapshots = await load_snapshots(ctx, {backend})
+    return snapshots_for_rule_are_outdated(rule, all_snapshots)
+
+
+def snapshots_for_rule_are_outdated(rule: Rule, existing_snapshots: List[Snapshot]):
+    snapshot_times = get_snapshot_times_for_rule(existing_snapshots, rule)
+
+    if not snapshot_times:
+        return True
+
+    next_snapshot_time = snapshot_times[0] + rule.deltas[0]
+    return next_snapshot_time < pendulum.now('utc')
