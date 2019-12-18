@@ -14,4 +14,4 @@ aiostream==0.2.4
 boto3==1.5.25
 yarl==1.1.1
 # python-digitalocean==1.13.2
--e git+git://github.com/NiR-/python-digitalocean@knp#egg=python-digitalocean
+-e git+git://github.com/koalalorenzo/python-digitalocean@119c9b77fd64db94abdf3a63c23b666b3fffb066#egg=python-digitalocean
