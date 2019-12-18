@@ -3,7 +3,7 @@ import pykube.objects
 from ..errors import ConfigurationError
 
 
-BACKENDS = ['google', 'aws']
+BACKENDS = ['google', 'aws', 'digitalocean']
 
 
 def get_backends():
