@@ -10,6 +10,7 @@ according to your specifications.
 
 - Google Compute Engine disks.
 - AWS EBS disks.
+- Digitial Ocean.
 
 
 Want to help adding support for other backends? It's pretty straightforward.
