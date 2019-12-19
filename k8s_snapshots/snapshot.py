@@ -392,10 +392,10 @@ def determine_next_snapshot(snapshots, rules):
 
 def get_snapshot_times_for_rule(snapshots: List[Snapshot], rule: Rule):
     # Find all the snapshots that match this rule
-	# This returns a <filter> object
+    # This returns a <filter> object
     snapshots_for_rule = filter_snapshots_by_rule(snapshots, rule)
     # Rewrite the list to snapshot
-	snapshot_times = [item.created_at for item in snapshots_for_rule]
+    snapshot_times = [item.created_at for item in snapshots_for_rule]
     # Sort by timestamp
     snapshot_times = sorted(snapshot_times, reverse=True)
     return list(snapshot_times)
