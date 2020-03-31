@@ -11,6 +11,6 @@ isodate==0.5.4
 python-dateutil==2.6.0
 aiohttp==3.5.4
 aiostream==0.2.4
-boto3==1.5.25
+boto3==1.9.220
 yarl==1.1.1
 python-digitalocean==1.15.0
