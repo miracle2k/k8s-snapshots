@@ -176,7 +176,7 @@ async def rule_from_pv(
     return Rule(
         name=rule_name_from_k8s_source(source, claim_name),
         backend=backend_name,
-        source=volume.obj['metadata']['selfLink'],
+        source=source,
         deltas=deltas,
         disk=disk
     )
