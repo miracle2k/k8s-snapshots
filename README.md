@@ -36,7 +36,7 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: k8s-snapshot
+      app: k8s-snapshots
   template:
     metadata:
       labels:
