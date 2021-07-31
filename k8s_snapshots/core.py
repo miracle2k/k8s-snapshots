@@ -224,11 +224,10 @@ async def rule_from_persistent_volume(
         _log.debug('Checking volume for deltas')
         deltas = get_deltas(volume.annotations,
                             ctx.config.get('deltas_annotation_key'))
-    except AnnotationNotFound as exc:
+    except AnnotationNotFound:
         _log.info(
             events.Annotation.NOT_FOUND,
-            key_hints=['volume.metadata.name'],
-            exc_info=exc,
+            key_hints=['volume.metadata.name']
         )
         return
     except AnnotationError:
