@@ -1,4 +1,4 @@
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: ThirdPartyResource
 metadata:
   name: snapshot-rule.k8s-snapshots.elsdoerfer.com
