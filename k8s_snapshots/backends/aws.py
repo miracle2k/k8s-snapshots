@@ -20,6 +20,9 @@ def validate_config(config):
 
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
+    if 'csi' in volume.obj['spec']:
+        if volume.obj['spec'].get('csi')['driver'] == 'ebs.csi.aws.com':
+            return True
     return bool(volume.obj['spec'].get('awsElasticBlockStore'))
 
 
@@ -43,7 +46,10 @@ def get_current_region(ctx):
 
 
 def get_disk_identifier(volume: pykube.objects.PersistentVolume):
-    volume_url = volume.obj['spec'].get('awsElasticBlockStore')['volumeID']
+    if volume.obj['spec'].get('csi')['driver'] == 'ebs.csi.aws.com':
+        volume_url = volume.obj['spec'].get('csi')['volumeHandle']
+    else:
+        volume_url = volume.obj['spec'].get('awsElasticBlockStore')['volumeID']
 
     if volume_url.startswith('aws://'):
         # An url such as aws://eu-west-1a/vol-00292b2da3d4ed1e4
