@@ -95,7 +95,7 @@ async def shutdown(*, loop=None):
 
 
 def print_tasks():
-    tasks = list(asyncio.Task.all_tasks())
+    tasks = list(asyncio.all_tasks())
     structlog.get_logger().debug('print tasks', tasks=tasks)
 
 
