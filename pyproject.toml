@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "k8s-snapshots"
+version = "0.1.0"
+description = ""
+authors = ["Michael Elsdorfer <michael@elsdoerfer.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+google-api-python-client = "^1.6.2"
+requests = "^2.27.1"
+pykube = "^0.14.0"
+tarsnapper = "^0.4.0"
+aiochannel = "^1.0.1"
+structlog = "^21.5.0"
+attrs = "^17.3.0"
+pendulum = "^0.8.0"
+confcollect = "^0.2.3"
+isodate = "^0.6.1"
+python-dateutil = "^2.6.0"
+aiohttp = "^3.5.4"
+aiostream = "^0.4.4"
+boto3 = "^1.21.10"
+yarl = "^1.1.1"
+python-digitalocean = "^1.15.0"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
