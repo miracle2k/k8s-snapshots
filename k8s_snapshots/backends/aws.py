@@ -20,6 +20,11 @@ def validate_config(config):
 
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
+    """Returns `True` if the AWS backend can handle the given volume.
+
+    Currently, this responds to volumes using the in-tree "awsElasticBlockStore" driver,
+    as well as CSI volumes using `ebs.csi.aws.com`.
+    """
     if 'csi' in volume.obj['spec']:
         if volume.obj['spec'].get('csi')['driver'] == 'ebs.csi.aws.com':
             return True
@@ -27,6 +32,8 @@ def supports_volume(volume: pykube.objects.PersistentVolume):
 
 
 class AWSDiskIdentifier(NamedTuple):
+    """An AWS volume id (e.g. `vol-07c6ffacaac8cf641`) + region (e.g. `eu-west-1`).
+    """
     region: str
     volume_id: str
 
@@ -44,35 +51,49 @@ def get_current_region(ctx):
     return ctx.config['aws_region']
 
 
+def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> AWSDiskIdentifier:
+    """Parses the AWS volume id, and the region the volume is in, from the given `PersistentVolume`,
+    and returns them as a `AWSDiskIdentifier` tuple.
 
-def get_disk_identifier(volume: pykube.objects.PersistentVolume):
-    if volume.obj['spec'].get('csi')['driver'] == 'ebs.csi.aws.com':
-        volume_url = volume.obj['spec'].get('csi')['volumeHandle']
+    This information is not encoded in a standard way and differs between Kubernetes versions and
+    storage backends.
+    """
+
+    csi = volume.obj['spec'].get('csi')
+    if csi and csi['driver'] == 'ebs.csi.aws.com':
+        volume_url = csi['volumeHandle']
     else:
         volume_url = volume.obj['spec'].get('awsElasticBlockStore')['volumeID']
 
+    # A url such as `aws://eu-west-1a/vol-00292b2da3d4ed1e4`. The region is included.
     if volume_url.startswith('aws://'):
-        # An url such as aws://eu-west-1a/vol-00292b2da3d4ed1e4
         parts = urlparse(volume_url)
         zone = parts.netloc
         volume_id = parts.path[1:]
 
         return AWSDiskIdentifier(region=zone[:-1], volume_id=volume_id)
-    else:
-        # Older versions of kube just put the volume id in the volume id field.
-        volume_id = volume_url
-        region = volume.obj.get('metadata').get('labels', {}).get('failure-domain.beta.kubernetes.io/region')
-        if region:
-            return AWSDiskIdentifier(region=region, volume_id=volume_id)
-        else:
-            nodeSelectorTerms = volume.obj['spec']['nodeAffinity']['required']['nodeSelectorTerms']
-            for term in nodeSelectorTerms:
-                matchExpressions = term.get('matchExpressions')
-                if matchExpressions:
-                    for expression in matchExpressions:
-                        if expression.get('key') == "failure-domain.beta.kubernetes.io/region":
-                            region = expression.get('values')[0]
+
+    # We then assume the volume id is given directly, e.g. `vol-00292b2da3d4ed1e4`.
+    volume_id = volume_url
+
+    # We still need the region. Sometimes there is a label:
+    region = volume.obj.get('metadata').get('labels', {}).get('failure-domain.beta.kubernetes.io/region')
+    if region:
         return AWSDiskIdentifier(region=region, volume_id=volume_id)
+
+    # Or we would expect there to be a nodeAffinity selector
+    nodeSelectorTerms = volume.obj['spec']['nodeAffinity']['required']['nodeSelectorTerms']
+    for term in nodeSelectorTerms:
+        matchExpressions = term.get('matchExpressions')
+        if matchExpressions:
+            for expression in matchExpressions:
+                if expression.get('key') in ("failure-domain.beta.kubernetes.io/region",):
+                    region = expression.get('values')[0]
+                if expression.get('key') in ('topology.ebs.csi.aws.com/zone',):
+                    region = expression.get('values')[0][:-1]
+
+    return AWSDiskIdentifier(region=region, volume_id=volume_id)
+
 
 def parse_timestamp(date) -> pendulum.Pendulum:
     return pendulum.instance(date)
