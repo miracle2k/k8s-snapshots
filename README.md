@@ -313,26 +313,3 @@ FAQ
 Starting with v0.3, when *k8s-snapshots* decides when to create the
 next snapshot, and which snapshots it deletes, it no longer considers
 snapshots that are not correctly labeled by it.
-
-
-Development
------------
-
-For local development, you can still connect to an existing Google
-Cloud Project and Kubernetes cluster using the config options
-available. If you are lucky, your local workstation is already setup
-the way you need it. If we can find credentials for Google Cloud
-or Kubernetes, they will be used automatically.
-
-However, depending on the backend, you need to provide some options that
-otherwise would be read from the instance metadata:
-
-
-For AWS:
-
-    $ AWS_REGION=eu-west-1 python -m k8s_snapshots
-
-
-For Google Cloud:
-
-    $ GCLOUD_PROJECT=revolving-randy python -m k8s_snapshots
