@@ -1,21 +1,37 @@
-Automatic Volume Snapshots on Kubernetes
-========================================
+Interval-based Volume Snapshots and Expiry on Kubernetes
+========================================================
 
-**How is this useful?** Add a backup annotation to a `PersistentVolume` or
-`PersistentVolumeClaim` resource:
+**What you do:** Create a custom `SnapshotRule` resource which defines your desired snapshot intervals.
+**What I do:** Create snapshots of your volumes, and expire old ones using a Grandfather-father-son backup scheme.
 
-```bash
-kubectl patch pv pvc-01f74065-8fe9-11e6-abdd-42010af00148 -p \
-  '{"metadata": {"annotations": {"backup.kubernetes.io/deltas": "P1D P30D P360D"}}}'
-``` 
+**Supported Environments**:
 
-Per the deltas given, `k8s-snapshots` will now create a daily snapshot 
-of the volume. It will keep  30 daily snapshots, and then for one year 
-it will keep a monthly  snapshot. If the daemon is not running for a while, 
-it will still  try to approximate your desired snapshot scheme as closely 
-as possible.
+- Google Compute Engine disks.
+- AWS EBS disks.
+- Digital Ocean.
 
-You can also use a CRD:
+Want to help adding support for other backends? It's pretty straightforward.
+Have a look at the [API that backends need to implement](https://github.com/miracle2k/k8s-snapshots/blob/master/k8s_snapshots/backends/abstract.py).
+
+
+Quickstart
+----------
+
+A persistent volume claim:
+
+```
+cat <<EOF | kubectl apply -f -
+apiVersion: "k8s-snapshots.elsdoerfer.com/v1"
+kind: SnapshotRule
+metadata:
+  name: postgres
+spec:
+  deltas: P1D P30D
+  persistentVolumeClaim: postgres-data
+EOF
+```
+
+A specific AWS EC2 volume:
 
 ```
 cat <<EOF | kubectl apply -f -
@@ -32,14 +48,14 @@ spec:
 EOF
 ```
 
-**Supported Environments**:
 
-- Google Compute Engine disks.
-- AWS EBS disks.
-- Digital Ocean.
+You can also use an annotation instead of the CRDs:
 
-Want to help adding support for other backends? It's pretty straightforward.
-Have a look at the [API that backends need to implement](https://github.com/miracle2k/k8s-snapshots/blob/master/k8s_snapshots/backends/abstract.py).
+
+```bash
+kubectl patch pv pvc-01f74065-8fe9-11e6-abdd-42010af00148 -p \
+  '{"metadata": {"annotations": {"backup.kubernetes.io/deltas": "P1D P30D P360D"}}}'
+``` 
 
 
 Usage
@@ -90,6 +106,9 @@ consist of 24 backups each one hour older than the previous
 (or the closest approximation possible given the available backups),
 the second generation of 7 backups each one day older than the previous,
 and backups older than 7 days will be discarded for good.
+
+If the daemon is not running for a while, it will still  try to approximate your desired 
+snapshot scheme as closely as possible.
 
 The most recent backup is always kept.
 
