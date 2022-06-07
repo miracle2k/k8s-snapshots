@@ -267,7 +267,7 @@ async def rule_from_persistent_volume_claim(
         deltas = get_deltas(
             volume_claim.annotations, ctx.config.get('deltas_annotation_key'))
     except AnnotationNotFound as exc:
-        _log.exception(
+        _log.info(
             events.Annotation.NOT_FOUND,
             key_hints=['volume_claim.metadata.name'],
         )
