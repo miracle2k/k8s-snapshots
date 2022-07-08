@@ -115,8 +115,6 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskId
     gce_disk_location = volume_handle[3]
 
     if gce_disk_location.count('-') == 1:
-        # seems like Google likes to put __ in between zones in the label
-        # backup.kubernetes.io/zone when the pv is regional
         return GoogleDiskIdentifier(name=gce_disk, region=gce_disk_location, regional=True)
     else:
         return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_location, regional=False)
