@@ -115,7 +115,7 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskId
     gce_disk_location_type = volume_handle[2]
     gce_disk_location = volume_handle[3]
 
-    if gce_disk_location_type == "zones":
+    if gce_disk_location_type == 'zones':
         return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_location, regional=False)
     else:
         return GoogleDiskIdentifier(name=gce_disk, region=gce_disk_location, regional=True)
