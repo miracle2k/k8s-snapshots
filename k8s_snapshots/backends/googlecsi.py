@@ -112,12 +112,13 @@ class GoogleDiskIdentifier(NamedTuple):
 def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskIdentifier:
     volume_handle = volume.obj['spec']['csi']['volumeHandle'].split('/')
     gce_disk = volume_handle[-1]
+    gce_disk_location_type = volume_handle[2]
     gce_disk_location = volume_handle[3]
 
-    if gce_disk_location.count('-') == 1:
-        return GoogleDiskIdentifier(name=gce_disk, region=gce_disk_location, regional=True)
-    else:
+    if gce_disk_location_type == "zones":
         return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_location, regional=False)
+    else:
+        return GoogleDiskIdentifier(name=gce_disk, region=gce_disk_location, regional=True)
 
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
