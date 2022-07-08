@@ -56,4 +56,5 @@ compute.snapshots.get
 compute.snapshots.list
 compute.snapshots.setLabels
 compute.zoneOperations.get
+compute.regionOperations.get
 ```
