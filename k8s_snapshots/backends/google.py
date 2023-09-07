@@ -116,28 +116,26 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskId
     # specify a zone; but if not specified there, K8s can choose a
     # random zone within the master region. So we really can't trust
     # that value anyway.
-    # There is a label that gives a failure region, but labels aren't
+    # There is a label that gives a region, but labels aren't
     # really a trustworthy source for this.
     # Apparently, this is a thing in the Kubernetes source too, see:
     # getDiskByNameUnknownZone in pkg/cloudprovider/providers/gce/gce.go,
     # e.g. https://github.com/jsafrane/kubernetes/blob/2e26019629b5974b9a311a9f07b7eac8c1396875/pkg/cloudprovider/providers/gce/gce.go#L2455
-    gce_disk_zone = volume.labels.get(
-        'failure-domain.beta.kubernetes.io/zone'
-    )
+    gce_disk_zone = volume.labels.get('topology.kubernetes.io/zone') \
+      or volume.labels.get('failure-domain.beta.kubernetes.io/zone')
 
     if not gce_disk_zone:
         raise UnsupportedVolume('cannot find the zone of the disk')
 
-    gce_disk_region = volume.labels.get(
-        'failure-domain.beta.kubernetes.io/region'
-    )
+    gce_disk_region = volume.labels.get('topology.kubernetes.io/region') \
+      or volume.labels.get('failure-domain.beta.kubernetes.io/region')
 
     if not gce_disk_region:
         raise UnsupportedVolume('cannot find the region of the disk')
 
     if "__" in gce_disk_zone:
         # seems like Google likes to put __ in between zones in the label
-        # failure-domain.beta.kubernetes.io/zone when the pv is regional
+        # when the pv is regional
         return GoogleDiskIdentifier(name=gce_disk, region=gce_disk_region, regional=True)
     else:
         return GoogleDiskIdentifier(name=gce_disk, zone=gce_disk_zone, regional=False)

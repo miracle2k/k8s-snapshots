@@ -77,7 +77,12 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> AWSDiskIdent
     volume_id = volume_url
 
     # We still need the region. Sometimes there is a label:
-    region = volume.obj.get('metadata').get('labels', {}).get('failure-domain.beta.kubernetes.io/region')
+    # topology.kubernetes.io/region is the official standard label as
+    # of kubernetes 1.17, but failure-domain.beta.kubernetes.io/region is
+    # the pre-standard label, now deprecated but still in use on
+    # existing volumes, so we have to check both.
+    region = volume.obj.get('metadata').get('labels', {}).get('topology.kubernetes.io/region') \
+      or volume.obj.get('metadata').get('labels', {}).get('failure-domain.beta.kubernetes.io/region')
     if region:
         return AWSDiskIdentifier(region=region, volume_id=volume_id)
 
@@ -87,12 +92,16 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> AWSDiskIdent
         matchExpressions = term.get('matchExpressions')
         if matchExpressions:
             for expression in matchExpressions:
+                if expression.get('key') in ("topology.kubernetes.io/region",):
+                    region = expression.get('values')[0]
                 if expression.get('key') in ("failure-domain.beta.kubernetes.io/region",):
                     region = expression.get('values')[0]
                 if expression.get('key') in ('topology.ebs.csi.aws.com/zone',):
                     region = expression.get('values')[0][:-1]
+    if region:
+        return AWSDiskIdentifier(region=region, volume_id=volume_id)
 
-    return AWSDiskIdentifier(region=region, volume_id=volume_id)
+    raise UnsupportedVolume('cannot find the region of the disk')()
 
 
 def parse_timestamp(date) -> pendulum.Pendulum:
