@@ -122,7 +122,13 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> GoogleDiskId
 
 
 def supports_volume(volume: pykube.objects.PersistentVolume):
-    return bool(volume.obj['spec'].get('csi'))
+    csi = volume.obj['spec'].get('csi')
+    if not csi:
+        return False
+    return csi.get('driver') in (
+        'pd.csi.storage.gke.io',
+        'gce-pd.csi.storage.gke.io',
+    )
 
 
 def parse_timestamp(date_str: str) -> pendulum.Pendulum:

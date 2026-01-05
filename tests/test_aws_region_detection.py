@@ -5,15 +5,11 @@ import pykube
 
 from k8s_snapshots.rule import rule_from_pv
 from tests.fixtures import make_resource
-import k8s_snapshots.backends as backends
 
 
 def test_rule_from_pv_uses_topology_zone_for_aws_region(
     fx_context,
-    monkeypatch,
 ):
-    monkeypatch.setattr(backends, 'BACKENDS', ['aws'])
-
     volume = make_resource(
         pykube.objects.PersistentVolume,
         'pvc-tronbyt-anon',
