@@ -76,21 +76,37 @@ def get_disk_identifier(volume: pykube.objects.PersistentVolume) -> AWSDiskIdent
     # We then assume the volume id is given directly, e.g. `vol-00292b2da3d4ed1e4`.
     volume_id = volume_url
 
-    # We still need the region. Sometimes there is a label:
-    region = volume.obj.get('metadata').get('labels', {}).get('failure-domain.beta.kubernetes.io/region')
+    # We still need the region. Sometimes there is a label/annotation:
+    metadata = volume.obj.get('metadata', {})
+    labels = metadata.get('labels', {})
+    annotations = metadata.get('annotations', {})
+
+    region = (
+        labels.get('failure-domain.beta.kubernetes.io/region') or
+        annotations.get('failure-domain.beta.kubernetes.io/region')
+    )
     if region:
         return AWSDiskIdentifier(region=region, volume_id=volume_id)
 
     # Or we would expect there to be a nodeAffinity selector
-    nodeSelectorTerms = volume.obj['spec']['nodeAffinity']['required']['nodeSelectorTerms']
+    node_affinity = volume.obj.get('spec', {}).get('nodeAffinity', {})
+    node_required = node_affinity.get('required', {})
+    nodeSelectorTerms = node_required.get('nodeSelectorTerms', [])
     for term in nodeSelectorTerms:
-        matchExpressions = term.get('matchExpressions')
-        if matchExpressions:
-            for expression in matchExpressions:
-                if expression.get('key') in ("failure-domain.beta.kubernetes.io/region",):
-                    region = expression.get('values')[0]
-                if expression.get('key') in ('topology.ebs.csi.aws.com/zone',):
-                    region = expression.get('values')[0][:-1]
+        matchExpressions = term.get('matchExpressions') or []
+        for expression in matchExpressions:
+            key = expression.get('key')
+            values = expression.get('values') or []
+            if not values:
+                continue
+            if key in ('failure-domain.beta.kubernetes.io/region',):
+                region = values[0]
+                break
+            if key in ('topology.ebs.csi.aws.com/zone', 'topology.kubernetes.io/zone'):
+                region = values[0][:-1]
+                break
+        if region:
+            break
 
     return AWSDiskIdentifier(region=region, volume_id=volume_id)
 
